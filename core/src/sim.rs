@@ -7,7 +7,9 @@
 
 use bevy_ecs::prelude::*;
 
-use crate::components::{PlayerControlled, Transform};
+use crate::components::{Gait, PlayerControlled, PlayerReport, Stance, Transform, Velocity};
+use crate::events::{SimEvent, SimEvents};
+use crate::systems;
 
 /// Default values for the ticker. Change these to change the starting
 /// behaviour everywhere. At runtime, edit [`SimConfig`] instead.
@@ -66,8 +68,8 @@ pub struct Sim {
     schedule: Schedule,
     accumulator: f64,
     player: Entity,
-    /// Latest transform reported by the client, applied at the next tick.
-    pending_player: Option<Transform>,
+    /// Latest state reported by the client, applied at the next tick.
+    pending_player: Option<PlayerReport>,
 }
 
 impl Default for Sim {
@@ -80,11 +82,22 @@ impl Sim {
     pub fn new(config: SimConfig) -> Self {
         let mut world = World::new();
         world.insert_resource(SimClock::default());
-        let player = world.spawn((PlayerControlled, Transform::default())).id();
+        world.init_resource::<SimEvents>();
+        let player = world
+            .spawn((
+                PlayerControlled,
+                Transform::default(),
+                Velocity::default(),
+                Stance::default(),
+                Gait::default(),
+            ))
+            .id();
+        let mut schedule = Schedule::default();
+        schedule.add_systems(systems::watch_player_movement);
         Self {
             config,
             world,
-            schedule: Schedule::default(),
+            schedule,
             accumulator: 0.0,
             player,
             pending_player: None,
@@ -125,16 +138,27 @@ impl Sim {
         self.config.tick_seconds().map_or(0.0, |t| (self.accumulator / t).clamp(0.0, 1.0))
     }
 
-    /// Client reports where the player is now. Only the newest report counts.
-    /// It reaches the world at the start of the next tick, so every system in
-    /// a tick sees the same position.
-    pub fn report_player_transform(&mut self, transform: Transform) {
-        self.pending_player = Some(transform);
+    /// Client reports the player's current movement state. Only the newest
+    /// report counts. It reaches the world at the start of the next tick, so
+    /// every system in a tick sees the same state.
+    pub fn report_player(&mut self, report: PlayerReport) {
+        self.pending_player = Some(report);
     }
 
-    /// The player's transform as the sim currently knows it.
-    pub fn player_transform(&self) -> Transform {
-        *self.world.get::<Transform>(self.player).expect("player entity always exists")
+    /// The player's state as the sim currently knows it (updates once per tick).
+    pub fn player_state(&self) -> PlayerReport {
+        let e = self.world.entity(self.player);
+        PlayerReport {
+            transform: *e.get::<Transform>().expect("player has Transform"),
+            velocity: *e.get::<Velocity>().expect("player has Velocity"),
+            stance: *e.get::<Stance>().expect("player has Stance"),
+            gait: *e.get::<Gait>().expect("player has Gait"),
+        }
+    }
+
+    /// Take every event the sim has produced since the last call.
+    pub fn drain_events(&mut self) -> Vec<SimEvent> {
+        std::mem::take(&mut self.world.resource_mut::<SimEvents>().0)
     }
 
     pub fn player_entity(&self) -> Entity {
@@ -159,8 +183,9 @@ impl Sim {
     }
 
     fn run_tick(&mut self, tick_seconds: f64) {
-        if let Some(t) = self.pending_player.take() {
-            *self.world.get_mut::<Transform>(self.player).expect("player entity always exists") = t;
+        if let Some(r) = self.pending_player.take() {
+            let mut e = self.world.entity_mut(self.player);
+            e.insert((r.transform, r.velocity, r.stance, r.gait));
         }
         {
             let mut clock = self.world.resource_mut::<SimClock>();
@@ -218,11 +243,17 @@ mod tests {
     #[test]
     fn player_report_applies_on_next_tick() {
         let mut sim = sim_at(10.0);
-        let t = Transform { position: [1.0, 2.0, 3.0], yaw: 0.5 };
-        sim.report_player_transform(t);
-        assert_eq!(sim.player_transform(), Transform::default()); // not yet
+        let r = PlayerReport {
+            transform: Transform { position: [1.0, 2.0, 3.0], yaw: 0.5 },
+            velocity: Velocity([3.0, 0.0, 4.0]),
+            stance: Stance::Crouching,
+            gait: Gait::Walk,
+        };
+        sim.report_player(r);
+        assert_eq!(sim.player_state(), PlayerReport::default()); // not yet
         sim.update(0.1);
-        assert_eq!(sim.player_transform(), t);
+        assert_eq!(sim.player_state(), r);
+        assert_eq!(sim.player_state().velocity.horizontal_speed(), 5.0);
     }
 
     #[test]
@@ -236,9 +267,32 @@ mod tests {
                 seen.0 = q.single().unwrap().position[0];
             },
         );
-        sim.report_player_transform(Transform { position: [42.0, 0.0, 0.0], yaw: 0.0 });
+        sim.report_player(PlayerReport {
+            transform: Transform { position: [42.0, 0.0, 0.0], yaw: 0.0 },
+            ..Default::default()
+        });
         sim.update(0.1);
         assert_eq!(sim.world().resource::<SeenX>().0, 42.0);
+    }
+
+    #[test]
+    fn movement_change_sends_event_back() {
+        let mut sim = sim_at(10.0);
+        sim.update(0.1);
+        assert!(sim.drain_events().is_empty(), "no event for the initial state");
+
+        sim.report_player(PlayerReport { stance: Stance::Prone, gait: Gait::Walk, ..Default::default() });
+        sim.update(0.1);
+        let events = sim.drain_events();
+        assert!(matches!(
+            events.as_slice(),
+            [SimEvent::PlayerMovementChanged { stance: Stance::Prone, gait: Gait::Walk, .. }]
+        ));
+
+        // Same state again: nothing new.
+        sim.report_player(PlayerReport { stance: Stance::Prone, gait: Gait::Walk, ..Default::default() });
+        sim.update(0.1);
+        assert!(sim.drain_events().is_empty());
     }
 
     #[test]

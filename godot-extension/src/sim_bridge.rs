@@ -4,7 +4,7 @@
 //! Inspector, including while the game runs (Remote scene tree).
 
 use godot::prelude::*;
-use ltw_core::Transform;
+use ltw_core::{Gait, PlayerReport, SimEvent, Stance, Transform, Velocity};
 use ltw_core::sim::{Sim, SimConfig, defaults};
 
 #[derive(GodotClass)]
@@ -41,6 +41,7 @@ impl INode for SimBridge {
         if ran > 0 {
             let tick = self.sim.clock().tick as i64;
             self.signals().ticked().emit(tick, ran as i64);
+            self.flush_events();
         }
     }
 }
@@ -50,6 +51,11 @@ impl SimBridge {
     /// Emitted after each frame in which at least one tick ran.
     #[signal]
     fn ticked(tick: i64, ticks_this_frame: i64);
+
+    /// A message from the sim (order acks, AI reports, ...). `kind` names the
+    /// event; `data` holds its fields.
+    #[signal]
+    fn sim_event(kind: GString, data: VarDictionary);
 
     /// Ticks completed since start.
     #[func]
@@ -69,21 +75,40 @@ impl SimBridge {
         self.sim.alpha()
     }
 
-    /// Godot owns player movement. Call this every physics frame to tell
-    /// the sim where the player is. It's applied at the start of the next tick.
+    /// Godot owns player movement. Call this every physics frame to tell the
+    /// sim the player's state. It's applied at the start of the next tick.
+    /// `stance` and `gait` are the `Player.Stance` / `Player.Gait` enum values.
     #[func]
-    fn report_player_transform(&mut self, position: Vector3, yaw: f32) {
-        self.sim.report_player_transform(Transform {
-            position: [position.x, position.y, position.z],
-            yaw,
+    fn report_player(&mut self, position: Vector3, yaw: f32, velocity: Vector3, stance: i64, gait: i64) {
+        let (Some(stance), Some(gait)) = (Stance::from_index(stance), Gait::from_index(gait)) else {
+            godot_error!("report_player: bad stance {stance} or gait {gait}");
+            return;
+        };
+        self.sim.report_player(PlayerReport {
+            transform: Transform { position: [position.x, position.y, position.z], yaw },
+            velocity: Velocity([velocity.x, velocity.y, velocity.z]),
+            stance,
+            gait,
         });
     }
 
-    /// Where the sim currently thinks the player is (updates once per tick).
+    /// The player's state as the sim knows it (updates once per tick):
+    /// position, yaw, velocity, speed, stance, gait.
     #[func]
-    fn get_player_position(&self) -> Vector3 {
-        let [x, y, z] = self.sim.player_transform().position;
-        Vector3::new(x, y, z)
+    fn get_player_state(&self) -> VarDictionary {
+        let s = self.sim.player_state();
+        let [px, py, pz] = s.transform.position;
+        let [vx, vy, vz] = s.velocity.0;
+        vdict! {
+            "position" => &Vector3::new(px, py, pz).to_variant(),
+            "yaw" => &s.transform.yaw.to_variant(),
+            "velocity" => &Vector3::new(vx, vy, vz).to_variant(),
+            "speed" => &s.velocity.horizontal_speed().to_variant(),
+            "stance" => &(s.stance as i64).to_variant(),
+            "stance_name" => &s.stance.name().to_variant(),
+            "gait" => &(s.gait as i64).to_variant(),
+            "gait_name" => &s.gait.name().to_variant(),
+        }
     }
 
     /// Advance exactly one tick (works while paused).
@@ -93,6 +118,25 @@ impl SimBridge {
         self.sim.step();
         let tick = self.sim.clock().tick as i64;
         self.signals().ticked().emit(tick, 1);
+        self.flush_events();
+    }
+
+    /// Emit a `sim_event` signal for everything the sim produced.
+    fn flush_events(&mut self) {
+        for event in self.sim.drain_events() {
+            let (kind, data) = match event {
+                SimEvent::PlayerMovementChanged { tick, stance, gait, speed } => (
+                    "player_movement_changed",
+                    vdict! {
+                        "tick" => &(tick as i64).to_variant(),
+                        "stance" => &stance.name().to_variant(),
+                        "gait" => &gait.name().to_variant(),
+                        "speed" => &speed.to_variant(),
+                    },
+                ),
+            };
+            self.signals().sim_event().emit(&GString::from(kind), &data);
+        }
     }
 
     fn sync_config(&mut self) {

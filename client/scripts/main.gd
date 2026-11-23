@@ -1,5 +1,6 @@
 extends Node3D
-## Test-map bootstrap: puts the player on the terrain and shows debug info.
+## Test-map bootstrap: puts the player on the terrain, keeps the Rust sim
+## informed about the player, and shows debug info.
 
 @export var spawn_height_offset: float = 2.0
 
@@ -8,31 +9,46 @@ extends Node3D
 @onready var _player: Player = $Player
 @onready var _label: Label = $DebugHUD/Label
 
+var _last_sim_event := "(none yet)"
+
 
 func _ready() -> void:
 	var spawn := Vector3(0.0, _terrain.get_height_at(0.0, 0.0) + spawn_height_offset, 0.0)
 	_player.spawn_point = spawn
 	_player.respawn()
+	_sim.sim_event.connect(_on_sim_event)
 
 
 func _physics_process(_delta: float) -> void:
-	# Godot owns player movement; the sim just needs to know where the player is.
-	_sim.report_player_transform(_player.global_position, _player.get_node("Body").global_rotation.y)
+	# Godot owns player movement; the sim just needs to know the result.
+	_sim.report_player(_player.global_position, _player.global_rotation.y,
+		_player.velocity, _player.stance, _player.gait)
+
+
+func _on_sim_event(kind: String, data: Dictionary) -> void:
+	_last_sim_event = "%s %s" % [kind, data]
+	print("[sim] ", _last_sim_event)
 
 
 func _process(_delta: float) -> void:
 	var p := _player.global_position
-	var sp := _sim.get_player_position()
+	var s := _sim.get_player_state()
+	var sp: Vector3 = s.position
 	_label.text = "\n".join([
 		"FPS %d" % Engine.get_frames_per_second(),
 		"Sim tick %d   (%.0f Hz, x%.2f%s)" % [
 			_sim.get_tick(), _sim.tick_rate_hz, _sim.time_scale,
 			"  PAUSED" if _sim.paused else ""],
-		"Sim time %.1f s" % _sim.get_sim_time(),
-		"Pos %.1f, %.1f, %.1f   speed %.1f m/s" % [
-			p.x, p.y, p.z, Vector2(_player.velocity.x, _player.velocity.z).length()],
-		"Sim sees player at %.1f, %.1f, %.1f" % [sp.x, sp.y, sp.z],
-		"WASD move · Space jump · Shift sprint · Esc free mouse · P pause sim · N step",
+		"Godot: pos %.1f, %.1f, %.1f   speed %.2f / %.2f m/s   %s, %s" % [
+			p.x, p.y, p.z, Vector2(_player.velocity.x, _player.velocity.z).length(),
+			_player.current_max_speed(),
+			Player.Stance.keys()[_player.stance].to_lower(),
+			Player.Gait.keys()[_player.gait].to_lower()],
+		"Rust:  pos %.1f, %.1f, %.1f   speed %.2f m/s   %s, %s" % [
+			sp.x, sp.y, sp.z, s.speed, s.stance_name, s.gait_name],
+		"Last sim event: %s" % _last_sim_event,
+		"WASD move · Ctrl tactical · Shift sprint · C crouch · X prone · Space jump",
+		"Esc free mouse · P pause sim · N step sim",
 	])
 
 

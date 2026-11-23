@@ -120,7 +120,7 @@ func _build_heights() -> void:
 			var mask := lerpf(center_roughness, 1.0, edge)
 			_heights[z * _samples + x] = h * h * max_height_m * mask
 	# Shift down so the centre sits at roughly y = 0.
-	var c := _samples / 2.0
+	var c := int(_samples / 2.0)  # centre sample (must be a whole index)
 	var offset := _heights[c * _samples + c]
 	for i in _heights.size():
 		_heights[i] -= offset
@@ -194,7 +194,7 @@ func _update_material() -> void:
 		return
 	if _material == null:
 		_material = ShaderMaterial.new()
-		_material.shader = preload("res://scenes/world/terrain.gdshader")
+		_material.shader = preload("res://shaders/terrain.gdshader")
 	_material.set_shader_parameter("grid_spacing", grid_spacing_m)
 	_mesh_instance.material_override = _material
 
