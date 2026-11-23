@@ -2,9 +2,12 @@
 
 pub mod components;
 pub mod events;
+pub mod org;
+pub mod rng;
 pub mod sim;
+pub mod soldier;
 pub mod systems;
 
 pub use components::{Gait, PlayerControlled, PlayerReport, Stance, Transform, Velocity};
 pub use events::SimEvent;
-pub use sim::{Sim, SimClock, SimConfig};
+pub use sim::{Sim, SimClock, SimConfig, SoldierInfo, UnitInfo};

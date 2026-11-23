@@ -111,6 +111,97 @@ impl SimBridge {
         }
     }
 
+    // ------------------------------------------------------------ platoon
+
+    /// Create a platoon (HQ of 6 + 3 sections of 10) around the player, who
+    /// becomes its platoon commander.
+    /// Returns the platoon's unit id.
+    #[func]
+    fn spawn_platoon(&mut self, origin: Vector3, yaw: f32) -> i64 {
+        self.sim.spawn_platoon([origin.x, origin.y, origin.z], yaw) as i64
+    }
+
+    /// Every soldier as a Dictionary (id, name, rank, role, unit, position,
+    /// health, life, weapon, rounds, magazines, ...), sorted by id.
+    #[func]
+    fn get_soldiers(&mut self) -> VarArray {
+        let mut out = VarArray::new();
+        for s in self.sim.soldiers() {
+            let [px, py, pz] = s.position;
+            let mags: PackedInt32Array = s.magazines.iter().map(|m| *m as i32).collect();
+            let d = vdict! {
+                "id" => &(s.id as i64).to_variant(),
+                "name" => &s.name.to_variant(),
+                "rank" => &s.rank.abbrev().to_variant(),
+                "role" => &s.role.name().to_variant(),
+                "role_abbrev" => &s.role.abbrev().to_variant(),
+                "unit_id" => &(s.unit_id as i64).to_variant(),
+                "unit_name" => &s.unit_name.to_variant(),
+                "fire_team" => &s.fire_team.map_or("", |t| t.name()).to_variant(),
+                "slot" => &(s.slot as i64).to_variant(),
+                "is_player" => &s.is_player.to_variant(),
+                "is_officer" => &s.is_officer.to_variant(),
+                "position" => &Vector3::new(px, py, pz).to_variant(),
+                "yaw" => &s.yaw.to_variant(),
+                "stance" => &s.stance.name().to_variant(),
+                "health" => &s.health.to_variant(),
+                "max_health" => &s.max_health.to_variant(),
+                "life" => &s.life.name().to_variant(),
+                "weapon_id" => &s.weapon_id.to_variant(),
+                "rounds_in_weapon" => &(s.rounds_in_weapon as i64).to_variant(),
+                "magazines" => &mags.to_variant(),
+                "reserve_rounds" => &(s.reserve_rounds as i64).to_variant(),
+                "frag_grenades" => &(s.frag_grenades as i64).to_variant(),
+                "smoke_grenades" => &(s.smoke_grenades as i64).to_variant(),
+                "field_dressings" => &(s.field_dressings as i64).to_variant(),
+            };
+            out.push(&d.to_variant());
+        }
+        out
+    }
+
+    /// Every unit (platoon, squads) as a Dictionary, sorted by id.
+    #[func]
+    fn get_units(&mut self) -> VarArray {
+        let mut out = VarArray::new();
+        for u in self.sim.units() {
+            let soldiers: PackedInt32Array = u.soldier_ids.iter().map(|i| *i as i32).collect();
+            let children: PackedInt32Array = u.child_unit_ids.iter().map(|i| *i as i32).collect();
+            let kind = u.kind.key();
+            let d = vdict! {
+                "id" => &(u.id as i64).to_variant(),
+                "kind" => &kind.to_variant(),
+                "name" => &u.name.to_variant(),
+                "callsign" => &u.callsign.to_variant(),
+                "parent_id" => &u.parent_id.map_or(-1, |p| p as i64).to_variant(),
+                "leader_soldier_id" => &u.leader_soldier_id.map_or(-1, |p| p as i64).to_variant(),
+                "soldier_ids" => &soldiers.to_variant(),
+                "child_unit_ids" => &children.to_variant(),
+            };
+            out.push(&d.to_variant());
+        }
+        out
+    }
+
+    /// Tell the sim the ground height under an AI soldier.
+    #[func]
+    fn set_soldier_height(&mut self, soldier_id: i64, y: f32) -> bool {
+        self.sim.set_soldier_height(soldier_id as u32, y)
+    }
+
+    /// The player fired: rounds left in the inserted magazine.
+    #[func]
+    fn report_player_rounds(&mut self, rounds: i64) {
+        self.sim.report_player_rounds(rounds.max(0) as u32);
+    }
+
+    /// Swap the player's magazine. Returns rounds in the new magazine, or -1
+    /// if there are no loaded spare magazines left.
+    #[func]
+    fn player_reload(&mut self) -> i64 {
+        self.sim.player_reload().map_or(-1, |r| r as i64)
+    }
+
     /// Advance exactly one tick (works while paused).
     #[func]
     fn step(&mut self) {
@@ -132,6 +223,21 @@ impl SimBridge {
                         "stance" => &stance.name().to_variant(),
                         "gait" => &gait.name().to_variant(),
                         "speed" => &speed.to_variant(),
+                    },
+                ),
+                SimEvent::PlatoonSpawned { unit_id, soldiers } => (
+                    "platoon_spawned",
+                    vdict! {
+                        "unit_id" => &(unit_id as i64).to_variant(),
+                        "soldiers" => &(soldiers as i64).to_variant(),
+                    },
+                ),
+                SimEvent::Reloaded { soldier_id, rounds, magazines_left } => (
+                    "reloaded",
+                    vdict! {
+                        "soldier_id" => &(soldier_id as i64).to_variant(),
+                        "rounds" => &(rounds as i64).to_variant(),
+                        "magazines_left" => &(magazines_left as i64).to_variant(),
                     },
                 ),
             };

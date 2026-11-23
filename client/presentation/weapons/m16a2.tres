@@ -1,0 +1,51 @@
+[gd_resource type="Resource" script_class="WeaponViewData" format=3]
+
+[ext_resource type="Script" path="res://scripts/weapon_view_data.gd" id="1_data"]
+[ext_resource type="PackedScene" path="res://assets/models/weapons/m16a2.glb" id="2_model"]
+
+[resource]
+script = ExtResource("1_data")
+weapon_id = "m16a2"
+model = ExtResource("2_model")
+hip_position = Vector3(0.1, -0.14, -0.2)
+hip_rotation_deg = Vector3(0, 3, 0)
+ads_eye_relief = 0.045
+ads_fov = 55.0
+ads_time = 0.22
+sprint_position = Vector3(0.07, -0.17, -0.18)
+sprint_rotation_deg = Vector3(-10, 30, 12)
+reload_position = Vector3(0.03, -0.11, -0.27)
+reload_rotation_deg = Vector3(16, 14, -38)
+rounds_per_minute = 800.0
+fire_modes = PackedStringArray("semi", "burst")
+burst_count = 3
+magazine_size = 30
+fire_anim_speed = 2.7
+selector_angles_deg = PackedFloat32Array(90, 180)
+recoil_kick_back = 0.022
+recoil_pitch_deg = 2.2
+recoil_yaw_deg = 0.7
+recoil_view_pitch_deg = 0.45
+recoil_view_yaw_deg = 0.15
+recoil_return = 16.0
+weight_kg = 3.8
+sway_amount = 1.0
+bob_amount = 1.0
+right_hand_socket = "socket_grip_right_hand"
+right_hand_offset = Vector3(0.032, 0.03, 0.075)
+right_hand_fingers_dir = Vector3(-0.15, -0.45, -1)
+right_hand_back_dir = Vector3(1, 0.1, 0)
+right_finger_curl_deg = PackedFloat32Array(30, 22, 78, 82, 84)
+left_hand_socket = "socket_grip_left_hand"
+left_hand_offset = Vector3(-0.045, -0.042, 0.08)
+left_hand_fingers_dir = Vector3(1, 0.1, -0.45)
+left_hand_back_dir = Vector3(-0.2, -1, 0)
+left_finger_curl_deg = PackedFloat32Array(20, 36, 38, 40, 44)
+reload_animation = "reload_magazine"
+magazine_bone = "magazine"
+magazine_hand_offset = Vector3(-0.03, -0.075, 0)
+magazine_hand_fingers_dir = Vector3(0.2, -0.3, -1)
+magazine_hand_back_dir = Vector3(-1, 0, 0)
+magazine_finger_curl_deg = PackedFloat32Array(20, 45, 50, 50, 50)
+reload_reach_time = 0.25
+reload_seated_at = 2.0

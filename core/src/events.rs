@@ -18,6 +18,10 @@ pub enum SimEvent {
         gait: Gait,
         speed: f32,
     },
+    /// A platoon was created.
+    PlatoonSpawned { unit_id: u32, soldiers: u32 },
+    /// A soldier swapped magazines.
+    Reloaded { soldier_id: u32, rounds: u32, magazines_left: u32 },
 }
 
 /// Outbox of events produced this tick and not yet collected by the client.

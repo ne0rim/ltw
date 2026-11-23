@@ -43,6 +43,8 @@ enum Gait { STILL, TACTICAL, WALK, SPRINT }
 @export_group("Look")
 @export var mouse_sensitivity: float = 0.0025
 @export var invert_y: bool = false
+## Mouse sensitivity multiplier while aiming down sights.
+@export var ads_sensitivity_scale: float = 0.6
 ## How far you can look down / up, in degrees.
 @export_range(-89.0, 0.0) var min_pitch_deg: float = -85.0
 @export_range(0.0, 89.0) var max_pitch_deg: float = 85.0
@@ -54,6 +56,8 @@ enum Gait { STILL, TACTICAL, WALK, SPRINT }
 var spawn_point := Vector3.ZERO
 var stance: Stance = Stance.STANDING
 var gait: Gait = Gait.STILL
+## Set by the view model while the player aims down sights (no sprinting, slower).
+var is_aiming := false
 
 @onready var _head: Node3D = $Head
 @onready var _collision: CollisionShape3D = $Collision
@@ -86,9 +90,17 @@ func _unhandled_input(event: InputEvent) -> void:
 
 ## Turn by a mouse delta in pixels: x turns the body, y tilts the head.
 func look(mouse_delta: Vector2) -> void:
-	rotate_y(-mouse_delta.x * mouse_sensitivity)
-	var dy := mouse_delta.y * mouse_sensitivity * (-1.0 if invert_y else 1.0)
+	var sens := mouse_sensitivity * (ads_sensitivity_scale if is_aiming else 1.0)
+	rotate_y(-mouse_delta.x * sens)
+	var dy := mouse_delta.y * sens * (-1.0 if invert_y else 1.0)
 	_head.rotation.x = clampf(_head.rotation.x - dy,
+		deg_to_rad(min_pitch_deg), deg_to_rad(max_pitch_deg))
+
+
+## Recoil: nudge the view up (pitch) and sideways (yaw), in radians.
+func add_view_kick(pitch: float, yaw: float) -> void:
+	rotate_y(yaw)
+	_head.rotation.x = clampf(_head.rotation.x + pitch,
 		deg_to_rad(min_pitch_deg), deg_to_rad(max_pitch_deg))
 
 
@@ -117,7 +129,7 @@ func current_max_speed() -> float:
 
 func _physics_process(delta: float) -> void:
 	var input := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
-	var wants_sprint := Input.is_action_pressed("sprint") and -input.y >= sprint_min_forward
+	var wants_sprint := Input.is_action_pressed("sprint") and -input.y >= sprint_min_forward and not is_aiming
 
 	# Jumping or sprinting from crouch/prone stands you up first.
 	if stance != Stance.STANDING and (wants_sprint or Input.is_action_just_pressed("jump")):
@@ -163,7 +175,7 @@ func _pick_gait(input: Vector2, wants_sprint: bool) -> Gait:
 		return Gait.WALK
 	if wants_sprint:
 		return Gait.SPRINT
-	if Input.is_action_pressed("tactical"):
+	if is_aiming or Input.is_action_pressed("tactical"):
 		return Gait.TACTICAL
 	return Gait.WALK
 
