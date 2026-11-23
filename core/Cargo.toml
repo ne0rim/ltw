@@ -1,0 +1,8 @@
+[package]
+name = "ltw-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy_ecs = "0.20.1"
+serde = { version = "1.0.229", features = ["derive"] }

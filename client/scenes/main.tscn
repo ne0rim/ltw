@@ -1,0 +1,52 @@
+[gd_scene format=3 uid="uid://cpu8ocrlwx6pg"]
+
+[ext_resource type="Script" uid="uid://b0jq3mws8yksp" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" uid="uid://u67papb74exa" path="res://scripts/terrain.gd" id="2_terrain"]
+[ext_resource type="PackedScene" path="res://scenes/player/player.tscn" id="3_player"]
+
+[sub_resource type="ProceduralSkyMaterial" id="Sky_mat"]
+sky_top_color = Color(0.45, 0.45, 0.45, 1)
+sky_horizon_color = Color(0.8, 0.8, 0.8, 1)
+ground_bottom_color = Color(0.25, 0.25, 0.25, 1)
+ground_horizon_color = Color(0.8, 0.8, 0.8, 1)
+
+[sub_resource type="Sky" id="Sky_1"]
+sky_material = SubResource("Sky_mat")
+
+[sub_resource type="Environment" id="Env_1"]
+background_mode = 2
+sky = SubResource("Sky_1")
+ambient_light_source = 3
+ambient_light_energy = 0.6
+tonemap_mode = 2
+fog_enabled = true
+fog_light_color = Color(0.78, 0.78, 0.78, 1)
+fog_density = 0.0012
+adjustment_enabled = true
+adjustment_saturation = 0.0
+
+[node name="Main" type="Node3D" unique_id=1677297843]
+script = ExtResource("1_main")
+
+[node name="SimBridge" type="SimBridge" parent="." unique_id=1137151572]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1680425314]
+environment = SubResource("Env_1")
+
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=1431456021]
+transform = Transform3D(0.866025, -0.353553, 0.353553, 0, 0.707107, 0.707107, -0.5, -0.612372, 0.612372, 0, 50, 0)
+shadow_enabled = true
+directional_shadow_max_distance = 250.0
+
+[node name="Terrain" type="Node3D" parent="." unique_id=2102137708]
+script = ExtResource("2_terrain")
+
+[node name="Player" parent="." unique_id=1749561026 instance=ExtResource("3_player")]
+
+[node name="DebugHUD" type="CanvasLayer" parent="." unique_id=1457497997]
+
+[node name="Label" type="Label" parent="DebugHUD" unique_id=1790762972]
+offset_left = 12.0
+offset_top = 8.0
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4
