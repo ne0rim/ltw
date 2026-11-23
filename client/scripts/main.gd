@@ -9,8 +9,9 @@ extends Node3D
 @onready var _player: Player = $Player
 @onready var _label: Label = $DebugHUD/Label
 @onready var _view: ViewModel = $Player/Head/Camera/ViewModel
+@onready var _platoon: PlatoonView = $Platoon
+@onready var _command: CommandInput = $Command
 
-var _platoon: PlatoonView
 var _last_sim_event := "(none yet)"
 
 
@@ -20,10 +21,8 @@ func _ready() -> void:
 	_player.respawn()
 	_sim.sim_event.connect(_on_sim_event)
 
-	# The platoon lives in Rust; the player is its platoon leader.
-	_platoon = PlatoonView.new()
-	_platoon.name = "Platoon"
-	add_child(_platoon)
+	# The platoon lives in Rust; the player is its platoon commander.
+	# The Platoon node is in the scene; its soldiers are built from the sim's roster.
 	_platoon.spawn_platoon(_sim, _terrain, ground, _player.global_rotation.y)
 
 	# The player's magazines come from their Rust inventory.
@@ -38,6 +37,8 @@ func _physics_process(_delta: float) -> void:
 
 
 func _on_sim_event(kind: String, data: Dictionary) -> void:
+	if kind in ["shot_fired", "reloaded", "out_of_ammo"] and data.get("soldier_id", -1) != _platoon.player_info.get("id", -2):
+		return  # too frequent to log for the whole platoon
 	_last_sim_event = "%s %s" % [kind, data]
 	print("[sim] ", _last_sim_event)
 
@@ -63,6 +64,8 @@ func _process(_delta: float) -> void:
 			sp.x, sp.y, sp.z, s.speed, s.stance_name, s.gait_name],
 		"Last sim event: %s" % _last_sim_event,
 		"Platoon: %s" % _platoon.summary(),
+		"Selected: %s   %s" % [_command.selection_text(), _command.last_message],
+		"\n".join(_platoon.unit_status_lines()),
 		"You: %s %s · %s · %s · health %.0f (%s)" % [me.get("rank", ""), me.get("name", ""),
 			me.get("role", ""), me.get("unit_name", ""), me.get("health", 0.0), me.get("life", "")],
 		"%s  %d/%d  %s · spare mags %d (%d rds)%s%s" % [_view.data.weapon_id.to_upper(), _view.ammo,
@@ -70,6 +73,7 @@ func _process(_delta: float) -> void:
 			"  RELOADING" if _view.reloading else "", "  NO MAGAZINES" if _view.out_of_magazines else ""],
 		"WASD move · Ctrl tactical · Shift sprint · C crouch · X prone · Space jump",
 		"LMB fire · RMB aim · R reload · B fire mode",
+		"Ctrl+1/2/3 sections · Ctrl+4 HQ (toggle) · Ctrl+M move here · Ctrl+F fire here",
 		"Esc free mouse · P pause sim · N step sim",
 	])
 

@@ -5,10 +5,13 @@
 //! in the accumulated time, so the sim stays deterministic however fast the
 //! client renders.
 
+use std::collections::HashMap;
+
 use bevy_ecs::prelude::*;
 
 use crate::components::{Gait, PlayerControlled, PlayerReport, Stance, Transform, Velocity};
 use crate::events::{SimEvent, SimEvents};
+use crate::orders::{self, CurrentOrder, Order, PendingOrders};
 use crate::org;
 use crate::rng::SimRng;
 use crate::soldier::*;
@@ -87,6 +90,7 @@ impl Sim {
         world.insert_resource(SimClock::default());
         world.init_resource::<SimEvents>();
         world.init_resource::<SimRng>();
+        world.init_resource::<PendingOrders>();
         let player = world
             .spawn((
                 PlayerControlled,
@@ -97,7 +101,16 @@ impl Sim {
             ))
             .id();
         let mut schedule = Schedule::default();
-        schedule.add_systems(systems::watch_player_movement);
+        schedule.add_systems(
+            (
+                orders::apply_orders,
+                orders::move_soldiers,
+                orders::fire_control,
+                orders::report_in_position,
+                systems::watch_player_movement,
+            )
+                .chain(),
+        );
         Self {
             config,
             world,
@@ -189,15 +202,17 @@ impl Sim {
     pub fn soldiers(&mut self) -> Vec<SoldierInfo> {
         let mut q = self.world.query::<(
             &Soldier, &SquadMember, &Transform, &Stance, &Health, &LifeState, &Inventory,
-            Has<CommissionedOfficer>, Has<PlayerControlled>,
+            Has<CommissionedOfficer>, Has<PlayerControlled>, Option<&Activity>, Option<&FireControl>,
         )>();
         let rows: Vec<_> = q
             .iter(&self.world)
-            .map(|(s, m, t, st, h, l, inv, off, pl)| (s.clone(), *m, *t, *st, *h, *l, inv.clone(), off, pl))
+            .map(|(s, m, t, st, h, l, inv, off, pl, act, fc)| {
+                (s.clone(), *m, *t, *st, *h, *l, inv.clone(), off, pl, act.copied(), fc.copied())
+            })
             .collect();
         let mut out: Vec<SoldierInfo> = rows
             .into_iter()
-            .map(|(s, m, t, stance, h, life, inv, is_officer, is_player)| {
+            .map(|(s, m, t, stance, h, life, inv, is_officer, is_player, act, fc)| {
                 let unit = self.world.get::<Unit>(m.squad);
                 let weapon = inv.primary.and_then(|w| self.world.get::<WeaponState>(w));
                 SoldierInfo {
@@ -224,6 +239,9 @@ impl Sim {
                     frag_grenades: inv.frag_grenades,
                     smoke_grenades: inv.smoke_grenades,
                     field_dressings: inv.field_dressings,
+                    activity: act.unwrap_or_default(),
+                    fire_target: fc.and_then(|f| f.target),
+                    out_of_ammo: fc.is_some_and(|f| f.out_of_ammo),
                 }
             })
             .collect();
@@ -233,17 +251,17 @@ impl Sim {
 
     /// Snapshot of every unit (platoons and squads), sorted by id.
     pub fn units(&mut self) -> Vec<UnitInfo> {
-        let mut q = self.world.query::<(&Unit, &Members, &Leader, Option<&ParentUnit>)>();
+        let mut q = self.world.query::<(&Unit, &Members, &Leader, Option<&ParentUnit>, Option<&CurrentOrder>)>();
         let rows: Vec<_> = q
             .iter(&self.world)
-            .map(|(u, m, l, p)| (u.clone(), m.0.clone(), l.0, p.map(|p| p.0)))
+            .map(|(u, m, l, p, o)| (u.clone(), m.0.clone(), l.0, p.map(|p| p.0), o.copied().unwrap_or_default()))
             .collect();
         let world = &self.world;
         let soldier_id = |e: Entity| world.get::<Soldier>(e).map(|s| s.id);
         let unit_id = |e: Entity| world.get::<Unit>(e).map(|u| u.id);
         let mut out: Vec<UnitInfo> = rows
             .into_iter()
-            .map(|(u, members, leader, parent)| UnitInfo {
+            .map(|(u, members, leader, parent, current)| UnitInfo {
                 id: u.id,
                 kind: u.kind,
                 name: u.name,
@@ -252,6 +270,9 @@ impl Sim {
                 leader_soldier_id: leader.and_then(soldier_id),
                 soldier_ids: members.iter().filter_map(|e| soldier_id(*e)).collect(),
                 child_unit_ids: members.iter().filter_map(|e| unit_id(*e)).collect(),
+                order: current.order,
+                status: unit_status(world, &members, current.order),
+                rounds: members.iter().map(|e| soldier_rounds(world, *e)).sum(),
             })
             .collect();
         out.sort_by_key(|u| u.id);
@@ -298,25 +319,42 @@ impl Sim {
     /// go back into the pouch; empty ones are dropped.
     pub fn reload_soldier(&mut self, soldier: Entity) -> Option<u32> {
         let weapon = self.world.get::<Inventory>(soldier)?.primary?;
-        let current = self.world.get::<WeaponState>(weapon)?.magazine;
-        let (best, left) = {
-            let mut inv = self.world.get_mut::<Inventory>(soldier)?;
-            let (idx, best) = inv.magazines.iter().copied().enumerate().max_by_key(|(_, r)| *r)?;
-            if best == 0 {
-                return None;
-            }
-            inv.magazines.remove(idx);
-            if let Some(r) = current.filter(|r| *r > 0) {
-                inv.magazines.push(r);
-            }
-            (best, inv.magazines.len() as u32)
-        };
-        self.world.get_mut::<WeaponState>(weapon)?.magazine = Some(best);
+        let mut inv = self.world.get::<Inventory>(soldier)?.clone();
+        let mut ws = self.world.get::<WeaponState>(weapon)?.clone();
+        let best = swap_magazine(&mut inv, &mut ws)?;
+        let left = inv.magazines.len() as u32;
+        *self.world.get_mut::<Inventory>(soldier)? = inv;
+        *self.world.get_mut::<WeaponState>(weapon)? = ws;
         let soldier_id = self.world.get::<Soldier>(soldier).map_or(0, |s| s.id);
         self.world
             .resource_mut::<SimEvents>()
             .push(SimEvent::Reloaded { soldier_id, rounds: best, magazines_left: left });
         Some(best)
+    }
+
+    /// Order units to move to `target`, forming up facing `facing` (yaw).
+    /// Several units keep their spacing relative to each other. Applied next tick.
+    pub fn order_move(&mut self, unit_ids: &[u32], target: [f32; 3], facing: f32) {
+        self.world
+            .resource_mut::<PendingOrders>()
+            .0
+            .push((unit_ids.to_vec(), Order::MoveTo { target, facing }));
+    }
+
+    /// Order units to fire at `target` until given another order. Applied next tick.
+    pub fn order_fire_at(&mut self, unit_ids: &[u32], target: [f32; 3]) {
+        self.world.resource_mut::<PendingOrders>().0.push((unit_ids.to_vec(), Order::FireAt { target }));
+    }
+
+    /// Ground heights for many soldiers at once (the client knows the terrain).
+    pub fn set_soldier_heights(&mut self, ids: &[u32], heights: &[f32]) {
+        let by_id: HashMap<u32, f32> = ids.iter().copied().zip(heights.iter().copied()).collect();
+        let mut q = self.world.query_filtered::<(&Soldier, &mut Transform), Without<PlayerControlled>>();
+        for (s, mut t) in q.iter_mut(&mut self.world) {
+            if let Some(y) = by_id.get(&s.id) {
+                t.position[1] = *y;
+            }
+        }
     }
 
     pub fn clock(&self) -> SimClock {
@@ -378,6 +416,9 @@ pub struct SoldierInfo {
     pub frag_grenades: u32,
     pub smoke_grenades: u32,
     pub field_dressings: u32,
+    pub activity: Activity,
+    pub fire_target: Option<[f32; 3]>,
+    pub out_of_ammo: bool,
 }
 
 /// Flat snapshot of one unit.
@@ -393,6 +434,39 @@ pub struct UnitInfo {
     pub soldier_ids: Vec<u32>,
     /// Sub-units (platoons).
     pub child_unit_ids: Vec<u32>,
+    pub order: Option<Order>,
+    /// "holding", "moving", "in position", "firing", "out of ammo".
+    pub status: &'static str,
+    /// Rounds carried by the unit's soldiers (loaded + spare).
+    pub rounds: u32,
+}
+
+fn soldier_rounds(world: &World, soldier: Entity) -> u32 {
+    let Some(inv) = world.get::<Inventory>(soldier) else { return 0 };
+    let loaded = inv.primary.and_then(|w| world.get::<WeaponState>(w)).and_then(|w| w.magazine).unwrap_or(0);
+    loaded + inv.reserve_rounds()
+}
+
+fn unit_status(world: &World, members: &[Entity], order: Option<Order>) -> &'static str {
+    // Only AI soldiers carry out orders (the player moves themselves).
+    let ai: Vec<Entity> = members.iter().copied().filter(|e| world.get::<PlayerControlled>(*e).is_none()).collect();
+    match order {
+        None => "holding",
+        Some(Order::MoveTo { .. }) => {
+            if ai.iter().any(|e| world.get::<MoveGoal>(*e).is_some_and(|g| g.0.is_some())) {
+                "moving"
+            } else {
+                "in position"
+            }
+        }
+        Some(Order::FireAt { .. }) => {
+            if !ai.is_empty() && ai.iter().all(|e| world.get::<FireControl>(*e).is_some_and(|f| f.out_of_ammo)) {
+                "out of ammo"
+            } else {
+                "firing"
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -593,6 +667,107 @@ mod tests {
         let sect_comds = soldiers.iter().filter(|s| s.role == Role::SectionCommander && s.rank == Rank::Sergeant);
         assert_eq!(sect_comds.count(), 3);
         assert!(soldiers.iter().any(|s| s.role == Role::PlatoonWarrant && s.rank == Rank::WarrantOfficer));
+    }
+
+    fn unit_id(sim: &mut Sim, name: &str) -> u32 {
+        sim.units().into_iter().find(|u| u.name == name).unwrap().id
+    }
+
+    fn run_seconds(sim: &mut Sim, s: f64) -> Vec<SimEvent> {
+        let mut events = Vec::new();
+        let ticks = (s * sim.config.tick_rate_hz).round() as u32;
+        for _ in 0..ticks {
+            sim.step();
+            events.extend(sim.drain_events());
+        }
+        events
+    }
+
+    #[test]
+    fn move_order_walks_section_into_formation_and_reports() {
+        let mut sim = sim_at(30.0);
+        sim.spawn_platoon([0.0, 0.0, 0.0], 0.0);
+        let s1 = unit_id(&mut sim, "1 Section");
+        sim.order_move(&[s1], [10.0, 0.0, -100.0], 0.0);
+        let events = run_seconds(&mut sim, 1.0);
+        assert!(events.iter().any(|e| matches!(e, SimEvent::OrderAcknowledged { unit_id, order: "move", .. } if *unit_id == s1)));
+        assert_eq!(sim.units().iter().find(|u| u.id == s1).unwrap().status, "moving");
+        let events = run_seconds(&mut sim, 60.0);
+        assert!(events.iter().any(|e| matches!(e, SimEvent::UnitInPosition { unit_id, .. } if *unit_id == s1)));
+        assert_eq!(sim.units().iter().find(|u| u.id == s1).unwrap().status, "in position");
+        // The section commander's slot is 2 m behind the anchor.
+        let sc = sim.soldiers().into_iter().find(|s| s.unit_id == s1 && s.slot == 0).unwrap();
+        assert!((sc.position[0] - 10.0).abs() < 0.01 && (sc.position[2] - -98.0).abs() < 0.01, "{:?}", sc.position);
+        assert_eq!(sc.activity, Activity::Idle);
+    }
+
+    #[test]
+    fn group_move_keeps_sections_apart() {
+        let mut sim = sim_at(30.0);
+        sim.spawn_platoon([0.0, 0.0, 0.0], 0.0);
+        let ids: Vec<u32> = ["1 Section", "2 Section", "3 Section"].iter().map(|n| unit_id(&mut sim, n)).collect();
+        sim.order_move(&ids, [0.0, 0.0, -150.0], 0.0);
+        run_seconds(&mut sim, 80.0);
+        let comds: Vec<[f32; 3]> = sim.soldiers().into_iter().filter(|s| s.role == Role::SectionCommander).map(|s| s.position).collect();
+        // Started 35 m apart left/centre/right; still roughly 35 m apart.
+        assert!((comds[0][0] - -35.0).abs() < 2.0 && comds[1][0].abs() < 2.0 && (comds[2][0] - 35.0).abs() < 2.0, "{comds:?}");
+    }
+
+    #[test]
+    fn hq_order_never_moves_the_player() {
+        let mut sim = sim_at(30.0);
+        sim.spawn_platoon([0.0, 0.0, 0.0], 0.0);
+        let hq = unit_id(&mut sim, "Platoon HQ");
+        sim.order_move(&[hq], [50.0, 0.0, 50.0], 0.0);
+        run_seconds(&mut sim, 30.0);
+        let me = sim.soldiers().into_iter().find(|s| s.is_player).unwrap();
+        assert_eq!(me.position, [0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn fire_order_spends_rounds_reloads_and_reports_shots() {
+        let mut sim = sim_at(30.0);
+        sim.spawn_platoon([0.0, 0.0, 0.0], 0.0);
+        let s2 = unit_id(&mut sim, "2 Section");
+        let before = sim.units().iter().find(|u| u.id == s2).unwrap().rounds;
+        sim.order_fire_at(&[s2], [0.0, 0.0, -200.0]);
+        let events = run_seconds(&mut sim, 90.0);
+        let shots: u32 = events.iter().filter_map(|e| match e { SimEvent::ShotFired { rounds, .. } => Some(*rounds), _ => None }).sum();
+        let after = sim.units().iter().find(|u| u.id == s2).unwrap().rounds;
+        assert!(shots > 100, "only {shots} rounds fired");
+        assert_eq!(before - after, shots, "rounds fired must come out of inventories");
+        assert!(events.iter().any(|e| matches!(e, SimEvent::Reloaded { .. })), "nobody reloaded");
+        assert_eq!(sim.units().iter().find(|u| u.id == s2).unwrap().status, "firing");
+        // Everyone faces the target (yaw 0 = looking down -Z).
+        for s in sim.soldiers().into_iter().filter(|s| s.unit_id == s2) {
+            assert!(s.yaw.abs() < 0.4, "{} faces {}", s.name, s.yaw);
+        }
+    }
+
+    #[test]
+    fn soldiers_run_dry_and_say_so() {
+        let mut sim = sim_at(30.0);
+        sim.spawn_platoon([0.0, 0.0, 0.0], 0.0);
+        let s3 = unit_id(&mut sim, "3 Section");
+        sim.order_fire_at(&[s3], [0.0, 0.0, -100.0]);
+        let events = run_seconds(&mut sim, 900.0);
+        assert!(events.iter().any(|e| matches!(e, SimEvent::OutOfAmmo { .. })));
+        let u = sim.units().into_iter().find(|u| u.id == s3).unwrap();
+        assert_eq!((u.rounds, u.status), (0, "out of ammo"));
+    }
+
+    #[test]
+    fn new_order_replaces_fire_with_move() {
+        let mut sim = sim_at(30.0);
+        sim.spawn_platoon([0.0, 0.0, 0.0], 0.0);
+        let s1 = unit_id(&mut sim, "1 Section");
+        sim.order_fire_at(&[s1], [0.0, 0.0, -100.0]);
+        run_seconds(&mut sim, 5.0);
+        sim.order_move(&[s1], [0.0, 0.0, 40.0], std::f32::consts::PI);
+        let events = run_seconds(&mut sim, 40.0);
+        let late_shots = events.iter().skip(5).filter(|e| matches!(e, SimEvent::ShotFired { .. })).count();
+        assert_eq!(late_shots, 0);
+        assert_eq!(sim.units().iter().find(|u| u.id == s1).unwrap().status, "in position");
     }
 
     #[test]

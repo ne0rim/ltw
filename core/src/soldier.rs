@@ -272,3 +272,66 @@ pub struct SquadMember {
     /// Position in the section's formation (0 = commander).
     pub slot: u8,
 }
+
+// ------------------------------------------------------------------ orders & activity
+
+/// A soldier's place in their unit's formation: metres (right, forward) from
+/// the unit anchor, in the unit's facing. Used when the unit is ordered to move.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
+pub struct FormationSlot {
+    pub right: f32,
+    pub forward: f32,
+}
+
+/// Where the soldier is walking to (None = not moving).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
+pub struct MoveGoal(pub Option<[f32; 3]>);
+
+/// What the soldier is doing right now (for the client and AI).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Activity {
+    #[default]
+    Idle,
+    Moving,
+    Firing,
+    Reloading,
+}
+
+impl Activity {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Moving => "moving",
+            Self::Firing => "firing",
+            Self::Reloading => "reloading",
+        }
+    }
+}
+
+/// Firing state for an ordered fire mission.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
+pub struct FireControl {
+    /// Point the soldier is firing at (None = not firing).
+    pub target: Option<[f32; 3]>,
+    /// Seconds until the next shot or burst.
+    pub cooldown: f32,
+    /// Seconds left in a magazine change (0 = not reloading).
+    pub reload_left: f32,
+    pub out_of_ammo: bool,
+}
+
+/// Swap the inserted magazine for the fullest spare. Partly used magazines go
+/// back in the pouch; empty ones are dropped. Returns the rounds now loaded,
+/// or None if no spare magazine has rounds.
+pub fn swap_magazine(inv: &mut Inventory, weapon: &mut WeaponState) -> Option<u32> {
+    let (idx, best) = inv.magazines.iter().copied().enumerate().max_by_key(|(_, r)| *r)?;
+    if best == 0 {
+        return None;
+    }
+    inv.magazines.remove(idx);
+    if let Some(r) = weapon.magazine.filter(|r| *r > 0) {
+        inv.magazines.push(r);
+    }
+    weapon.magazine = Some(best);
+    Some(best)
+}

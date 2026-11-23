@@ -2,6 +2,7 @@
 
 pub mod components;
 pub mod events;
+pub mod orders;
 pub mod org;
 pub mod rng;
 pub mod sim;

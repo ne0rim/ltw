@@ -154,6 +154,10 @@ impl SimBridge {
                 "frag_grenades" => &(s.frag_grenades as i64).to_variant(),
                 "smoke_grenades" => &(s.smoke_grenades as i64).to_variant(),
                 "field_dressings" => &(s.field_dressings as i64).to_variant(),
+                "activity" => &s.activity.name().to_variant(),
+                "has_fire_target" => &s.fire_target.is_some().to_variant(),
+                "fire_target" => &v3(s.fire_target.unwrap_or_default()).to_variant(),
+                "out_of_ammo" => &s.out_of_ammo.to_variant(),
             };
             out.push(&d.to_variant());
         }
@@ -177,10 +181,36 @@ impl SimBridge {
                 "leader_soldier_id" => &u.leader_soldier_id.map_or(-1, |p| p as i64).to_variant(),
                 "soldier_ids" => &soldiers.to_variant(),
                 "child_unit_ids" => &children.to_variant(),
+                "order" => &u.order.map_or("none", |o| o.name()).to_variant(),
+                "order_target" => &v3(u.order.map_or([0.0; 3], |o| o.target())).to_variant(),
+                "status" => &u.status.to_variant(),
+                "rounds" => &(u.rounds as i64).to_variant(),
             };
             out.push(&d.to_variant());
         }
         out
+    }
+
+    /// Order units (by unit id) to move to `target` and face `facing` (yaw).
+    /// Applied on the next tick; each unit answers with an `order_acknowledged` event.
+    #[func]
+    fn order_move(&mut self, unit_ids: PackedInt32Array, target: Vector3, facing: f32) {
+        let ids: Vec<u32> = unit_ids.as_slice().iter().map(|i| *i as u32).collect();
+        self.sim.order_move(&ids, [target.x, target.y, target.z], facing);
+    }
+
+    /// Order units (by unit id) to fire at `target` until given another order.
+    #[func]
+    fn order_fire_at(&mut self, unit_ids: PackedInt32Array, target: Vector3) {
+        let ids: Vec<u32> = unit_ids.as_slice().iter().map(|i| *i as u32).collect();
+        self.sim.order_fire_at(&ids, [target.x, target.y, target.z]);
+    }
+
+    /// Ground heights for many AI soldiers at once.
+    #[func]
+    fn set_soldier_heights(&mut self, soldier_ids: PackedInt32Array, heights: PackedFloat32Array) {
+        let ids: Vec<u32> = soldier_ids.as_slice().iter().map(|i| *i as u32).collect();
+        self.sim.set_soldier_heights(&ids, heights.as_slice());
     }
 
     /// Tell the sim the ground height under an AI soldier.
@@ -240,6 +270,33 @@ impl SimBridge {
                         "magazines_left" => &(magazines_left as i64).to_variant(),
                     },
                 ),
+                SimEvent::OrderAcknowledged { unit_id, callsign, order } => (
+                    "order_acknowledged",
+                    vdict! {
+                        "unit_id" => &(unit_id as i64).to_variant(),
+                        "callsign" => &callsign.to_variant(),
+                        "order" => &order.to_variant(),
+                    },
+                ),
+                SimEvent::UnitInPosition { unit_id, callsign } => (
+                    "unit_in_position",
+                    vdict! {
+                        "unit_id" => &(unit_id as i64).to_variant(),
+                        "callsign" => &callsign.to_variant(),
+                    },
+                ),
+                SimEvent::ShotFired { soldier_id, target, rounds } => (
+                    "shot_fired",
+                    vdict! {
+                        "soldier_id" => &(soldier_id as i64).to_variant(),
+                        "target" => &v3(target).to_variant(),
+                        "rounds" => &(rounds as i64).to_variant(),
+                    },
+                ),
+                SimEvent::OutOfAmmo { soldier_id } => (
+                    "out_of_ammo",
+                    vdict! { "soldier_id" => &(soldier_id as i64).to_variant() },
+                ),
             };
             self.signals().sim_event().emit(&GString::from(kind), &data);
         }
@@ -253,4 +310,8 @@ impl SimBridge {
             paused: self.paused,
         };
     }
+}
+
+fn v3(p: [f32; 3]) -> Vector3 {
+    Vector3::new(p[0], p[1], p[2])
 }

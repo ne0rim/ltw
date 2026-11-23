@@ -7,6 +7,7 @@
 use bevy_ecs::prelude::*;
 
 use crate::components::{Gait, Stance, Transform, Velocity};
+use crate::orders::CurrentOrder;
 use crate::rng::SimRng;
 use crate::soldier::*;
 
@@ -97,6 +98,7 @@ pub fn spawn_platoon(world: &mut World, leader: Entity, origin: [f32; 3], yaw: f
             },
             Members::default(),
             Leader(Some(leader)),
+            CurrentOrder::default(),
         ))
         .id();
 
@@ -145,6 +147,7 @@ fn spawn_squad(
             Members::default(),
             Leader(None),
             ParentUnit(platoon),
+            CurrentOrder::default(),
         ))
         .id();
 
@@ -178,7 +181,14 @@ fn spawn_squad(
                 ))
                 .id(),
         };
-        world.entity_mut(e).insert((Health::default(), LifeState::Healthy));
+        world.entity_mut(e).insert((
+            Health::default(),
+            LifeState::Healthy,
+            FormationSlot { right: s.offset.0, forward: s.offset.1 },
+            MoveGoal::default(),
+            Activity::default(),
+            FireControl::default(),
+        ));
         if s.rank.is_officer() && matches!(s.role, Role::PlatoonCommander) {
             world.entity_mut(e).insert(CommissionedOfficer);
         }

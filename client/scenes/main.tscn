@@ -4,6 +4,8 @@
 [ext_resource type="Script" uid="uid://u67papb74exa" path="res://scripts/terrain.gd" id="2_terrain"]
 [ext_resource type="PackedScene" path="res://scenes/player/player.tscn" id="3_player"]
 [ext_resource type="PackedScene" path="res://scenes/ui/crosshair.tscn" id="4_crosshair"]
+[ext_resource type="Script" path="res://scripts/platoon_view.gd" id="5_platoon"]
+[ext_resource type="Script" path="res://scripts/command_input.gd" id="6_command"]
 
 [sub_resource type="ProceduralSkyMaterial" id="Sky_mat"]
 sky_top_color = Color(0.45, 0.45, 0.45, 1)
@@ -43,6 +45,16 @@ directional_shadow_max_distance = 250.0
 script = ExtResource("2_terrain")
 
 [node name="Player" parent="." unique_id=1749561026 instance=ExtResource("3_player")]
+
+[node name="Platoon" type="Node3D" parent="." node_paths=PackedStringArray("commander")]
+script = ExtResource("5_platoon")
+commander = NodePath("../Player")
+
+[node name="Command" type="Node3D" parent="." node_paths=PackedStringArray("sim", "platoon", "player")]
+script = ExtResource("6_command")
+sim = NodePath("../SimBridge")
+platoon = NodePath("../Platoon")
+player = NodePath("../Player")
 
 [node name="DebugHUD" type="CanvasLayer" parent="." unique_id=1457497997]
 
