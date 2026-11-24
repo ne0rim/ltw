@@ -238,6 +238,8 @@ impl SimBridge {
                 "health" => &s.health.to_variant(),
                 "max_health" => &s.max_health.to_variant(),
                 "life" => &s.life.name().to_variant(),
+                "veterancy" => &s.veterancy.name().to_variant(),
+                "suppression" => &s.suppression.to_variant(),
                 "weapon_id" => &s.weapon_id.to_variant(),
                 "rounds_in_weapon" => &(s.rounds_in_weapon as i64).to_variant(),
                 "magazines" => &mags.to_variant(),
@@ -315,6 +317,23 @@ impl SimBridge {
     #[func]
     fn set_soldier_height(&mut self, soldier_id: i64, y: f32) -> bool {
         self.sim.set_soldier_height(soldier_id as u32, y)
+    }
+
+    /// The player fired one round from `origin` along `direction` (use the
+    /// camera: its position and -basis.z, so rounds go where the crosshair
+    /// points). The sim traces it and applies any hit next tick.
+    #[func]
+    fn report_player_shot(&mut self, origin: Vector3, direction: Vector3) -> bool {
+        self.sim.player_fire(
+            [origin.x, origin.y, origin.z],
+            [direction.x, direction.y, direction.z],
+        )
+    }
+
+    /// Developer tool: bring a dead player back to life.
+    #[func]
+    fn dev_revive_player(&mut self) {
+        self.sim.dev_revive_player();
     }
 
     /// The player fired: rounds left in the inserted magazine.
@@ -471,6 +490,18 @@ impl SimBridge {
                         "soldier_id" => &(soldier_id as i64).to_variant(),
                         "target" => &v3(target).to_variant(),
                         "rounds" => &(rounds as i64).to_variant(),
+                    },
+                ),
+                SimEvent::SoldierKilled {
+                    soldier_id,
+                    side,
+                    by_soldier_id,
+                } => (
+                    "soldier_killed",
+                    vdict! {
+                        "soldier_id" => &(soldier_id as i64).to_variant(),
+                        "side" => &side.name().to_variant(),
+                        "by_soldier_id" => &(by_soldier_id as i64).to_variant(),
                     },
                 ),
                 SimEvent::OutOfAmmo { soldier_id } => (

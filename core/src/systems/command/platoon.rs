@@ -437,6 +437,16 @@ fn advance(kind: TaskKind, mut plan: Plan, ctx: &Ctx) -> (Plan, Step) {
                 .is_none_or(|id| matches!((ctx.stage_of)(id), Some(TaskStage::Firing) | None));
             if fire_base_ready && ctx.all_done(&plan.assault) {
                 step.tasks = assault(objective, &plan);
+                // Shift fire beyond the objective so the assault isn't hit.
+                if let Some(fb) = plan.fire_base {
+                    step.tasks.push((
+                        fb,
+                        TaskKind::SupportByFire {
+                            position: offset(objective, plan.axis, tuning::FIRE_BASE_RANGE, 0.0),
+                            target: offset(objective, plan.axis, -tuning::SHIFT_FIRE_BEYOND, 0.0),
+                        },
+                    ));
+                }
                 plan.phase = PlanPhase::Assault;
             }
         }

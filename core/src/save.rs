@@ -6,10 +6,10 @@
 //! spawn every unit and soldier, then reconnect the links by id. A link whose
 //! id no longer exists is dropped rather than crashing the load.
 //!
-//! Weapons are saved with the soldier holding them and store only their
-//! weapon id and rounds loaded. Stats such as magazine capacity come from
-//! `core/data/weapons.json` when loading, so rebalancing a weapon also changes
-//! it in old saves.
+//! Weapons are saved with the soldier holding them: weapon id, rounds loaded
+//! and the weapon's own stats. A save keeps the stats its weapons had, so
+//! rebalancing `core/data/weapons.json` changes new weapons, not saved ones.
+//! (Saves from before stats were saved take them from the data file.)
 //!
 //! Godot owns the player's movement. After loading, the client reads
 //! `Sim::player_state()` and moves the player body to that position.
@@ -27,8 +27,9 @@ use serde::{Deserialize, Serialize};
 use crate::components::{
     Activity, CommissionedOfficer, Controller, CurrentOrder, FireControl, FireTeam, FormationSlot,
     Gait, GoalFacing, Health, Holder, Inventory, Leader, LifeState, Members, MoveGoal, Order,
-    ParentUnit, Plan, PlayerControlled, Rank, Role, Side, Soldier, SquadMember, Stance, Task,
-    Transform, Unit, UnitKind, Velocity, WeaponState, weapon_spec,
+    ParentUnit, Plan, PlayerControlled, Rank, Role, Side, Soldier, SquadMember, Stance,
+    Suppression, Task, Transform, Unit, UnitKind, Velocity, Veterancy, WeaponState, WeaponStats,
+    weapon_spec,
 };
 use crate::entities::platoon::NextIds;
 use crate::entities::soldier::{BodyBundle, SoldierBundle};
@@ -96,6 +97,10 @@ pub struct UnitSave {
 pub struct SoldierSave {
     pub id: u32,
     #[serde(default)]
+    pub veterancy: Veterancy,
+    #[serde(default)]
+    pub suppression: f32,
+    #[serde(default)]
     pub side: Side,
     pub name: String,
     pub rank: Rank,
@@ -129,6 +134,9 @@ pub struct WeaponSave {
     pub weapon_id: String,
     /// Rounds in the inserted magazine (None = no magazine).
     pub magazine: Option<u32>,
+    /// None in saves made before weapon stats were saved.
+    #[serde(default)]
+    pub stats: Option<WeaponStats>,
 }
 
 #[derive(Debug)]
@@ -262,12 +270,28 @@ pub fn capture(world: &mut World, player: Entity) -> SaveGame {
         Option<&Inventory>,
         Has<PlayerControlled>,
         Has<CommissionedOfficer>,
-        Option<&Side>,
+        (Option<&Side>, Option<&Veterancy>, Option<&Suppression>),
     )>();
     let mut soldiers: Vec<SoldierSave> = sq
         .iter(world)
         .map(
-            |(s, m, f, t, st, h, l, goal, gface, act, fire, inv, is_player, is_officer, side)| {
+            |(
+                s,
+                m,
+                f,
+                t,
+                st,
+                h,
+                l,
+                goal,
+                gface,
+                act,
+                fire,
+                inv,
+                is_player,
+                is_officer,
+                (side, vet, sup),
+            )| {
                 let inv = inv.cloned().unwrap_or_default();
                 let weapon = inv
                     .primary
@@ -275,9 +299,12 @@ pub fn capture(world: &mut World, player: Entity) -> SaveGame {
                     .map(|w| WeaponSave {
                         weapon_id: w.weapon_id.clone(),
                         magazine: w.magazine,
+                        stats: Some(w.stats),
                     });
                 SoldierSave {
                     id: s.id,
+                    veterancy: vet.copied().unwrap_or_default(),
+                    suppression: sup.map_or(0.0, |s| s.0),
                     side: side.copied().unwrap_or_default(),
                     name: s.name.clone(),
                     rank: s.rank,
@@ -400,6 +427,8 @@ pub fn restore(world: &mut World, player: Entity, save: &SaveGame) {
         bundle.activity = s.activity;
         bundle.fire = s.fire;
         bundle.side = s.side;
+        bundle.veterancy = s.veterancy;
+        bundle.suppression = Suppression(s.suppression);
 
         let e = if s.is_player {
             // The player keeps the body the client reports.
@@ -421,16 +450,19 @@ pub fn restore(world: &mut World, player: Entity, save: &SaveGame) {
             world.entity_mut(e).insert(CommissionedOfficer);
         }
 
-        // Weapons of a type no longer in weapons.json are dropped.
+        // The saved stats; for older saves, the data file's. A weapon with
+        // neither (an old save of a type since removed) is dropped.
         let primary = s.weapon.as_ref().and_then(|w| {
-            let spec = weapon_spec(&w.weapon_id)?;
+            let stats = w
+                .stats
+                .or_else(|| weapon_spec(&w.weapon_id).map(|spec| spec.stats))?;
             Some(
                 world
                     .spawn(WeaponBundle {
                         state: WeaponState {
                             weapon_id: w.weapon_id.clone(),
-                            magazine_capacity: spec.magazine_capacity,
-                            magazine: w.magazine.map(|r| r.min(spec.magazine_capacity)),
+                            stats,
+                            magazine: w.magazine.map(|r| r.min(stats.magazine_capacity)),
                         },
                         holder: Holder(Some(e)),
                     })

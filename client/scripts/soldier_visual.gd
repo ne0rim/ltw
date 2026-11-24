@@ -37,6 +37,8 @@ var _target_pos := Vector3.ZERO
 var _target_yaw := 0.0
 var _aim_t := 0.0
 var _placed := false
+var _dead := false
+var _visor: MeshInstance3D
 
 
 func _init() -> void:
@@ -59,6 +61,7 @@ func _init() -> void:
 	add_child(_body)
 
 	var visor := MeshInstance3D.new()
+	_visor = visor
 	var vbox := BoxMesh.new()
 	vbox.size = Vector3(0.4, 0.12, 0.2)
 	var vmat := StandardMaterial3D.new()
@@ -127,13 +130,33 @@ func update_state(info: Dictionary, ground_y: float) -> void:
 	var doing := "" if activity == "idle" else " · %s" % activity
 	_label.text = "%s %s\n%s%s · %d+%d%s" % [info.rank, info.name, info.role_abbrev, team_txt,
 		info.rounds_in_weapon, info.reserve_rounds, doing]
-	visible = info.life != "dead"
+	if info.life == "dead" and not _dead:
+		_lie_down()
 	if info.weapon_id != _weapon_id:
 		_set_weapon(info.weapon_id)
 
 
 func set_selected(on: bool) -> void:
-	_ring.visible = on
+	_ring.visible = on and not _dead
+
+
+## Killed: the capsule falls forward and lies on the ground where they stood.
+## The rifle drops beside them. Nothing about them changes after this.
+func _lie_down() -> void:
+	_dead = true
+	activity = "idle"
+	# The capsule's axis goes from upright to lying along their facing.
+	_body.rotation = Vector3(deg_to_rad(-90.0), 0.0, 0.0)
+	_body.position = Vector3(0.0, 0.35, -0.9)
+	_visor.visible = false
+	_ring.visible = false
+	_side_ring.visible = false
+	if _weapon:
+		_weapon.position = Vector3(0.55, 0.06, -0.6)
+		_weapon.rotation_degrees = Vector3(0.0, 80.0, 90.0)
+	_label.text = _label.text.get_slice("\n", 0) + "\nKIA"
+	# The body is no longer an obstacle or a target for order raycasts.
+	collision_layer = 0
 
 
 ## World position of the weapon's muzzle (for tracers).
@@ -154,6 +177,8 @@ func _process(delta: float) -> void:
 	var k := 1.0 - exp(-follow_speed * delta)
 	position = position.lerp(_target_pos, k)
 	rotation.y = lerp_angle(rotation.y, _target_yaw, k)
+	if _dead:
+		return
 	var aiming := activity == "firing" or activity == "reloading"
 	_aim_t = move_toward(_aim_t, 1.0 if aiming else 0.0, delta * pose_speed * 0.5)
 	if _weapon:

@@ -6,7 +6,8 @@ use bevy_ecs::world::World;
 
 use crate::components::{
     Activity, FireControl, FormationSlot, Gait, GoalFacing, Health, Inventory, LifeState, MoveGoal,
-    Role, Side, Soldier, SquadMember, Stance, Transform, Velocity, WeaponSpec, weapon_spec,
+    Role, Side, Soldier, SquadMember, Stance, Suppression, Transform, Velocity, Veterancy,
+    WeaponSpec, weapon_spec,
 };
 
 use super::weapon::spawn_weapon;
@@ -34,11 +35,14 @@ pub struct SoldierBundle {
     pub activity: Activity,
     pub fire: FireControl,
     pub side: Side,
+    pub veterancy: Veterancy,
+    pub suppression: Suppression,
 }
 
 impl SoldierBundle {
     /// A healthy soldier with no orders.
     pub fn new(soldier: Soldier, member: SquadMember, slot: FormationSlot) -> Self {
+        let veterancy = Veterancy::for_rank(soldier.rank);
         Self {
             soldier,
             member,
@@ -50,6 +54,8 @@ impl SoldierBundle {
             activity: Activity::default(),
             fire: FireControl::default(),
             side: Side::default(),
+            veterancy,
+            suppression: Suppression::default(),
         }
     }
 }
@@ -122,7 +128,7 @@ fn issue_kit(world: &mut World, soldier: Entity, loadout: &Loadout) {
     let weapon = spawn_weapon(world, loadout.weapon, Some(soldier));
     world.entity_mut(soldier).insert(Inventory {
         primary: Some(weapon),
-        magazines: vec![loadout.weapon.magazine_capacity; loadout.spare_magazines as usize],
+        magazines: vec![loadout.weapon.stats.magazine_capacity; loadout.spare_magazines as usize],
         loose_rounds: 0,
         frag_grenades: loadout.frag_grenades,
         smoke_grenades: loadout.smoke_grenades,

@@ -4,17 +4,24 @@
 //! the order is given. A partly used magazine is swapped mid-mission, so they
 //! still fire a full magazine's worth. When every soldier in the unit is done
 //! (or out of ammo), the unit reports and its order clears.
+//!
+//! Each round becomes a `ShotRequest` with the shooter's spread (veterancy,
+//! stance, movement, suppression and the weapon's own dispersion); the combat
+//! system traces it and applies any hit (see `systems::combat`).
 
+use bevy_ecs::entity::Entity;
 use bevy_ecs::query::{QueryData, Without};
 use bevy_ecs::system::{Query, Res, ResMut};
 
+use crate::ballistics;
 use crate::components::{
-    Activity, FireControl, Inventory, Order, PlayerControlled, Role, Soldier, Transform,
-    WeaponState, swap_magazine, yaw_towards,
+    Activity, FireControl, Inventory, LifeState, Order, PlayerControlled, Role, Soldier, Stance,
+    Suppression, Transform, Velocity, Veterancy, WeaponState, swap_magazine, yaw_towards,
 };
 use crate::events::{SimEvent, SimEvents};
 use crate::rng::SimRng;
 use crate::sim::SimClock;
+use crate::systems::combat::{Aim, PendingShots, ShotRequest};
 
 use super::apply::Recipient;
 use super::queries::{AiSoldiers, OrderedUnit};
@@ -31,11 +38,14 @@ pub fn assign(
 ) {
     for m in units.iter().flat_map(|u| &u.members) {
         if let Ok(mut s) = soldiers.get_mut(*m) {
+            if *s.life == LifeState::Dead {
+                continue;
+            }
             s.fire.rounds_left = s
                 .inventory
                 .and_then(|i| i.primary)
                 .and_then(|w| weapons.get(w).ok())
-                .map_or(0, |w| w.magazine_capacity);
+                .map_or(0, |w| w.stats.magazine_capacity);
             s.goal.0 = None;
             s.fire.target = Some(target);
             s.fire.out_of_ammo = false;
@@ -49,11 +59,16 @@ pub fn assign(
 #[derive(QueryData)]
 #[query_data(mutable)]
 pub struct Shooter {
+    entity: Entity,
     soldier: &'static Soldier,
     transform: &'static mut Transform,
     fire: &'static mut FireControl,
     activity: &'static mut Activity,
     inventory: &'static mut Inventory,
+    stance: &'static Stance,
+    veterancy: &'static Veterancy,
+    suppression: &'static Suppression,
+    velocity: &'static Velocity,
 }
 
 /// Fire at ordered targets: aimed singles for riflemen, bursts for gunners,
@@ -62,17 +77,23 @@ pub fn fire_control(
     clock: Res<SimClock>,
     mut rng: ResMut<SimRng>,
     mut events: ResMut<SimEvents>,
+    mut pending_shots: ResMut<PendingShots>,
     mut shooters: Query<Shooter, Without<PlayerControlled>>,
     mut weapons: Query<&mut WeaponState>,
 ) {
     let dt = clock.dt as f32;
     for s in &mut shooters {
         let ShooterItem {
+            entity,
             soldier,
             mut transform,
             mut fire,
             mut activity,
             mut inventory,
+            stance,
+            veterancy,
+            suppression,
+            velocity,
         } = s;
         let Some(target) = fire.target else { continue };
         if fire.rounds_left == 0 {
@@ -140,17 +161,25 @@ pub fn fire_control(
             .min(fire.rounds_left);
         weapon.magazine = Some(rounds - shots);
         fire.rounds_left -= shots;
-        let spread = tuning::SPREAD_BASE + tuning::SPREAD_PER_METRE * range;
-        let (r, a) = (
-            rng.unit().sqrt() * spread,
-            rng.unit() * std::f32::consts::TAU,
-        );
-        let impact = [target[0] + r * a.cos(), target[1], target[2] + r * a.sin()];
-        events.push(SimEvent::ShotFired {
-            soldier_id: soldier.id,
-            target: impact,
-            rounds: shots,
-        });
+
+        // The accuracy formula: the weapon's dispersion and the shooter's own
+        // error (veterancy, stance, moving, suppression). See `ballistics`.
+        let moving = velocity.horizontal_speed() > 0.3;
+        let shooter_error =
+            ballistics::shooter_error_mrad(*veterancy, *stance, moving, suppression.0);
+        let sigma = ballistics::spread_mrad(weapon.stats.dispersion_mrad, shooter_error);
+        let p = transform.position;
+        let origin = [p[0], p[1] + ballistics::muzzle_height(*stance), p[2]];
+        for _ in 0..shots {
+            shots_out(
+                &mut pending_shots,
+                entity,
+                origin,
+                target,
+                sigma,
+                weapon.stats.max_range_m,
+            );
+        }
         let (lo, hi) = if gunner {
             tuning::GUNNER_INTERVAL
         } else {
@@ -163,6 +192,25 @@ pub fn fire_control(
             *activity = Activity::Idle;
         }
     }
+}
+
+/// Queue one AI round at a point (resolved by `systems::combat`).
+fn shots_out(
+    shots: &mut PendingShots,
+    shooter: Entity,
+    origin: [f32; 3],
+    target: [f32; 3],
+    sigma_mrad: f32,
+    max_range: f32,
+) {
+    shots.0.push(ShotRequest {
+        shooter,
+        origin,
+        aim: Aim::Point(target),
+        sigma_mrad,
+        max_range,
+        spare_close_friends: true,
+    });
 }
 
 /// When every soldier of a firing unit has fired their magazine's worth (or

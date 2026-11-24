@@ -39,17 +39,32 @@ const CONTROLS := [
 	"  Ctrl+M move here · Ctrl+F fire here",
 	"Sim",
 	"  P pause · N step one tick",
+	"  Ctrl+Alt+R revive (when killed)",
 	"UI",
 	"  Ctrl+Alt+1 dev · Ctrl+Alt+2 controls · Ctrl+Alt+3 game",
 	"  Esc free mouse",
 ]
 
 var _last_sim_event := "(none yet)"
+var _kia: Label
 ## Panels that were showing before the map opened.
 var _panels_before_map: Array[HudPanel] = []
 
 
 func _ready() -> void:
+	_kia = Label.new()
+	_kia.text = "KILLED IN ACTION\nCtrl+Alt+R  revive (dev)"
+	_kia.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_kia.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_kia.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_kia.add_theme_font_size_override("font_size", 40)
+	_kia.add_theme_color_override("font_color", Color(0.95, 0.25, 0.2))
+	_kia.add_theme_color_override("font_outline_color", Color.BLACK)
+	_kia.add_theme_constant_override("outline_size", 8)
+	_kia.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_kia.visible = false
+	add_child(_kia)
+
 	controls_panel.set_lines(PackedStringArray(CONTROLS))
 	tactical_map.setup(terrain, platoon, player, command)
 	sim.sim_event.connect(_on_sim_event)
@@ -84,6 +99,11 @@ func _toggle_map() -> void:
 				_panels_before_map.append(p)
 				p.visible = false
 		tactical_map.open()
+
+
+## Show or hide the "killed in action" message.
+func show_kia(on: bool) -> void:
+	_kia.visible = on
 
 
 func _process(_delta: float) -> void:

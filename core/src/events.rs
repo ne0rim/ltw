@@ -60,11 +60,18 @@ pub enum SimEvent {
     UnitInPosition { unit_id: u32, callsign: String },
     /// Every soldier of a unit has finished its fire mission (or run dry).
     FireMissionComplete { unit_id: u32, callsign: String },
-    /// A soldier fired `rounds` rounds; `target` is where they land.
+    /// A soldier fired `rounds` rounds; `target` is where they hit something or
+    /// came down (for tracers).
     ShotFired {
         soldier_id: u32,
         target: [f32; 3],
         rounds: u32,
+    },
+    /// A soldier was hit and killed.
+    SoldierKilled {
+        soldier_id: u32,
+        side: Side,
+        by_soldier_id: u32,
     },
     /// A soldier has fired their last magazine.
     OutOfAmmo { soldier_id: u32 },

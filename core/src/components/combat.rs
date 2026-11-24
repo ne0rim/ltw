@@ -25,6 +25,65 @@ impl Activity {
     }
 }
 
+/// How experienced a soldier is. Better soldiers aim better (their numbers
+/// are in `core/data/veterancy.json`).
+#[derive(
+    Component,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub enum Veterancy {
+    Green,
+    #[default]
+    Trained,
+    Veteran,
+    Elite,
+}
+
+impl Veterancy {
+    pub const ALL: [Self; 4] = [Self::Green, Self::Trained, Self::Veteran, Self::Elite];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Green => "green",
+            Self::Trained => "trained",
+            Self::Veteran => "veteran",
+            Self::Elite => "elite",
+        }
+    }
+
+    /// The soldier's own aiming error (mrad, 1 standard deviation).
+    pub fn aim_error_mrad(self) -> f32 {
+        crate::data::VETERANCY[&self].aim_error_mrad
+    }
+
+    /// Starting veterancy by rank, until soldiers have their own records:
+    /// privates and officers are trained, NCOs are veterans, warrant officers
+    /// are elite.
+    pub fn for_rank(rank: super::Rank) -> Self {
+        use super::Rank::*;
+        match rank {
+            Private | SecondLieutenant | Lieutenant | Captain | Major => Self::Trained,
+            Corporal | MasterCorporal | Sergeant => Self::Veteran,
+            WarrantOfficer | MasterWarrantOfficer | ChiefWarrantOfficer => Self::Elite,
+        }
+    }
+}
+
+/// How suppressed a soldier is, 0 (calm) to 1 (pinned). Rounds passing close
+/// raise it; it fades over time. Suppressed soldiers aim worse.
+#[derive(
+    Component, Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize,
+)]
+pub struct Suppression(pub f32);
+
 /// Firing state for an ordered fire mission.
 #[derive(
     Component, Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize,

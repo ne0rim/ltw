@@ -17,6 +17,10 @@ extends Node3D
 @onready var _player: Player = $Player
 @onready var _view: ViewModel = $Player/Head/Camera/ViewModel
 @onready var _platoon: PlatoonView = $Platoon
+@onready var _camera: Camera3D = $Player/Head/Camera
+@onready var _hud: Hud = $HUD
+
+var _player_dead := false
 
 
 func _ready() -> void:
@@ -43,7 +47,42 @@ func _ready() -> void:
 
 	# The player's magazines come from their Rust inventory.
 	_view.magazine_source = func() -> int: return _sim.player_reload()
-	_view.fired.connect(func(_muzzle: Transform3D) -> void: _sim.report_player_rounds(_view.ammo))
+	_view.fired.connect(_on_player_fired)
+
+
+## Each round goes to the sim along the camera's line of sight (where the
+## crosshair points). The sim traces it and decides what it hits.
+func _on_player_fired(_muzzle: Transform3D) -> void:
+	_sim.report_player_rounds(_view.ammo)
+	_sim.report_player_shot(_camera.global_position, -_camera.global_basis.z)
+
+
+## The sim decides when the player dies (one hit kills). While dead, the
+## player can't move, look or shoot; Ctrl+Alt+R revives (developer tool).
+func _process(_delta: float) -> void:
+	var dead: bool = _platoon.player_info.get("life", "") == "dead"
+	if dead != _player_dead:
+		_set_player_dead(dead)
+
+
+func _set_player_dead(dead: bool) -> void:
+	_player_dead = dead
+	_player.set_physics_process(not dead)
+	_player.set_process_unhandled_input(not dead)
+	_view.visible = not dead
+	_view.set_process(not dead)
+	_view.set_process_input(not dead)
+	_view.set_process_unhandled_input(not dead)
+	if dead:
+		_player.velocity = Vector3.ZERO
+		# Eyes at ground level, looking up a little: lying where you fell.
+		_player.get_node("Head").position.y = 0.25
+		_player.get_node("Head").rotation.x = 0.25
+	else:
+		_player.try_set_stance(Player.Stance.STANDING)
+		_player.get_node("Head").position.y = 1.65
+		_player.get_node("Head").rotation.x = 0.0
+	_hud.show_kia(dead)
 
 
 ## The terrain covers the map: same size, regenerated if it differs.
@@ -94,6 +133,9 @@ func _on_sim_event(kind: String, data: Dictionary) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.physical_keycode:
+			KEY_R when event.ctrl_pressed and event.alt_pressed:
+				if _player_dead:
+					_sim.dev_revive_player()
 			KEY_P:
 				_sim.paused = not _sim.paused
 			KEY_N:

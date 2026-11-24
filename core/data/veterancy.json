@@ -1,0 +1,6 @@
+{
+  "Green":   { "aim_error_mrad": 6.0 },
+  "Trained": { "aim_error_mrad": 4.0 },
+  "Veteran": { "aim_error_mrad": 3.0 },
+  "Elite":   { "aim_error_mrad": 2.0 }
+}

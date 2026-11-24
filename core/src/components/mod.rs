@@ -15,7 +15,7 @@ pub mod player;
 pub mod transform;
 pub mod weapon;
 
-pub use combat::{Activity, FireControl};
+pub use combat::{Activity, FireControl, Suppression, Veterancy};
 pub use command::{
     Controller, Issuer, MAX_ROUTE, Plan, PlanPhase, Playbook, Route, Side, Task, TaskKind,
     TaskStage,
@@ -30,4 +30,4 @@ pub use organisation::{
 };
 pub use player::{PlayerControlled, PlayerReport};
 pub use transform::{Transform, Velocity, place, yaw_towards};
-pub use weapon::{Holder, WeaponSpec, WeaponState, weapon_spec};
+pub use weapon::{Holder, WeaponSpec, WeaponState, WeaponStats, weapon_spec};

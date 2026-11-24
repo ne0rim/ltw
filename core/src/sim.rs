@@ -17,8 +17,9 @@ use bevy_ecs::world::World;
 use crate::components::{
     Activity, CommissionedOfficer, Controller, CurrentOrder, FireControl, FireTeam, Gait, Health,
     Inventory, Issuer, Leader, LifeState, Members, MoveGoal, Order, ParentUnit, Plan, PlanPhase,
-    Playbook, PlayerControlled, PlayerReport, Rank, Role, Side, Soldier, SquadMember, Stance, Task,
-    TaskKind, TaskStage, Transform, Unit, UnitKind, Velocity, WeaponState, swap_magazine,
+    Playbook, PlayerControlled, PlayerReport, Rank, Role, Side, Soldier, SquadMember, Stance,
+    Suppression, Task, TaskKind, TaskStage, Transform, Unit, UnitKind, Velocity, Veterancy,
+    WeaponState, swap_magazine,
 };
 use crate::entities::platoon::PlatoonSpec;
 use crate::entities::soldier::Loadout;
@@ -27,6 +28,7 @@ use crate::events::{SimEvent, SimEvents};
 use crate::map::{ActiveMap, MapDef};
 use crate::rng::SimRng;
 use crate::save::{self, SaveError, SaveGame};
+use crate::systems::combat::{Aim, PendingShots, ShotRequest};
 use crate::systems::{
     self,
     orders::{OrderRequest, PendingOrders},
@@ -140,6 +142,7 @@ impl Sim {
         world.init_resource::<SimEvents>();
         world.init_resource::<SimRng>();
         world.init_resource::<PendingOrders>();
+        world.init_resource::<systems::combat::PendingShots>();
         let player = player::spawn_player(&mut world);
         (world, player)
     }
@@ -153,6 +156,8 @@ impl Sim {
                 systems::orders::apply_orders,
                 systems::orders::move_soldiers,
                 systems::orders::fire_control,
+                systems::combat::resolve_shots,
+                systems::combat::recover_from_suppression,
                 systems::orders::report_fire_complete,
                 systems::orders::report_in_position,
                 systems::player::watch_player_movement,
@@ -382,36 +387,57 @@ impl Sim {
             Has<PlayerControlled>,
             Option<&Activity>,
             Option<&FireControl>,
-            Option<&Side>,
+            (Option<&Side>, Option<&Veterancy>, Option<&Suppression>),
         )>();
         let rows: Vec<_> = q
             .iter(&self.world)
-            .map(|(s, m, t, st, h, l, inv, off, pl, act, fc, side)| {
-                (
-                    s.clone(),
-                    *m,
-                    *t,
-                    *st,
-                    *h,
-                    *l,
-                    inv.clone(),
-                    off,
-                    pl,
-                    act.copied(),
-                    fc.copied(),
-                    side.copied().unwrap_or_default(),
-                )
-            })
+            .map(
+                |(s, m, t, st, h, l, inv, off, pl, act, fc, (side, vet, sup))| {
+                    (
+                        s.clone(),
+                        *m,
+                        *t,
+                        *st,
+                        *h,
+                        *l,
+                        inv.clone(),
+                        off,
+                        pl,
+                        act.copied(),
+                        fc.copied(),
+                        (
+                            side.copied().unwrap_or_default(),
+                            vet.copied().unwrap_or_default(),
+                            sup.map_or(0.0, |s| s.0),
+                        ),
+                    )
+                },
+            )
             .collect();
         let mut out: Vec<SoldierInfo> = rows
             .into_iter()
             .map(
-                |(s, m, t, stance, h, life, inv, is_officer, is_player, act, fc, side)| {
+                |(
+                    s,
+                    m,
+                    t,
+                    stance,
+                    h,
+                    life,
+                    inv,
+                    is_officer,
+                    is_player,
+                    act,
+                    fc,
+                    (side, veterancy, suppression),
+                )| {
                     let unit = self.world.get::<Unit>(m.squad);
                     let weapon = inv.primary.and_then(|w| self.world.get::<WeaponState>(w));
                     SoldierInfo {
                         id: s.id,
                         side,
+                        veterancy,
+                        suppression,
                         name: s.name,
                         rank: s.rank,
                         role: s.role,
@@ -544,7 +570,7 @@ impl Sim {
         };
         if let Some(mut ws) = self.world.get_mut::<WeaponState>(w) {
             if ws.magazine.is_some() {
-                ws.magazine = Some(rounds.min(ws.magazine_capacity));
+                ws.magazine = Some(rounds.min(ws.stats.magazine_capacity));
             }
         }
     }
@@ -553,6 +579,49 @@ impl Sim {
     /// the new magazine, or None if there are no loaded spares.
     pub fn player_reload(&mut self) -> Option<u32> {
         self.reload_soldier(self.player)
+    }
+
+    /// The player fired one round from `origin` along `direction` (the
+    /// camera's line of sight). The sim traces it like any other round: the
+    /// weapon's own dispersion applies (the player does the aiming), and it can
+    /// hit anyone, friend or foe. Resolved next tick. Ignored if the player is
+    /// dead or unarmed. Returns whether the round was queued.
+    pub fn player_fire(&mut self, origin: [f32; 3], direction: [f32; 3]) -> bool {
+        if self.world.get::<LifeState>(self.player) == Some(&LifeState::Dead) {
+            return false;
+        }
+        let Some(stats) = self
+            .world
+            .get::<Inventory>(self.player)
+            .and_then(|i| i.primary)
+            .and_then(|w| self.world.get::<WeaponState>(w))
+            .map(|w| w.stats)
+        else {
+            return false;
+        };
+        self.world
+            .resource_mut::<PendingShots>()
+            .0
+            .push(ShotRequest {
+                shooter: self.player,
+                origin,
+                aim: Aim::Direction(direction),
+                sigma_mrad: stats.dispersion_mrad,
+                max_range: stats.max_range_m,
+                spare_close_friends: false,
+            });
+        true
+    }
+
+    /// Developer tool: bring a dead player back to life where they lie.
+    pub fn dev_revive_player(&mut self) {
+        let mut e = self.world.entity_mut(self.player);
+        if let Some(mut life) = e.get_mut::<LifeState>() {
+            *life = LifeState::Healthy;
+        }
+        if let Some(mut h) = e.get_mut::<Health>() {
+            h.current = h.max;
+        }
     }
 
     /// Refill the player's pouches from an ammo box. Returns the number of
@@ -567,7 +636,11 @@ impl Sim {
     pub fn resupply_soldier(&mut self, soldier: Entity) -> Option<u32> {
         let role = self.world.get::<Soldier>(soldier)?.role;
         let weapon = self.world.get::<Inventory>(soldier)?.primary?;
-        let capacity = self.world.get::<WeaponState>(weapon)?.magazine_capacity;
+        let capacity = self
+            .world
+            .get::<WeaponState>(weapon)?
+            .stats
+            .magazine_capacity;
         let count = Loadout::basic(role).spare_magazines;
         self.world.get_mut::<Inventory>(soldier)?.magazines = vec![capacity; count as usize];
         if let Some(mut fc) = self.world.get_mut::<FireControl>(soldier) {
@@ -681,6 +754,9 @@ impl Sim {
 pub struct SoldierInfo {
     pub id: u32,
     pub side: Side,
+    pub veterancy: Veterancy,
+    /// 0 (calm) to 1 (pinned).
+    pub suppression: f32,
     pub name: String,
     pub rank: Rank,
     pub role: Role,

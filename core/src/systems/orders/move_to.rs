@@ -8,8 +8,8 @@ use bevy_ecs::query::{QueryData, Without};
 use bevy_ecs::system::{Query, Res, ResMut};
 
 use crate::components::{
-    Activity, CurrentOrder, Gait, GoalFacing, MoveGoal, Order, PlayerControlled, SquadMember,
-    Transform, Velocity, place, yaw_towards,
+    Activity, CurrentOrder, Gait, GoalFacing, LifeState, MoveGoal, Order, PlayerControlled,
+    SquadMember, Transform, Velocity, place, yaw_towards,
 };
 use crate::events::{SimEvent, SimEvents};
 use crate::sim::SimClock;
@@ -37,6 +37,9 @@ pub fn assign(units: &[Recipient], target: [f32; 3], facing: f32, soldiers: &mut
         ];
         for m in &u.members {
             if let Ok(mut s) = soldiers.get_mut(*m) {
+                if *s.life == LifeState::Dead {
+                    continue;
+                }
                 s.goal.0 = Some(place(anchor, facing, s.slot.right, s.slot.forward));
                 s.goal_facing.0 = Some(facing);
                 *s.activity = Activity::Moving;
@@ -59,7 +62,7 @@ pub fn assign_perimeter(
     let members: Vec<Entity> = units
         .iter()
         .flat_map(|u| u.members.iter().copied())
-        .filter(|m| soldiers.contains(*m))
+        .filter(|m| soldiers.get(*m).is_ok_and(|s| *s.life != LifeState::Dead))
         .collect();
     let n = members.len().max(1) as f32;
     for (i, m) in members.iter().enumerate() {
@@ -80,6 +83,7 @@ fn centroid(members: &[Entity], soldiers: &AiSoldiers) -> Option<[f32; 2]> {
     let points: Vec<[f32; 2]> = members
         .iter()
         .filter_map(|m| soldiers.get(*m).ok())
+        .filter(|s| *s.life != LifeState::Dead)
         .map(|s| [s.transform.position[0], s.transform.position[2]])
         .collect();
     (!points.is_empty()).then(|| average(points.into_iter()))

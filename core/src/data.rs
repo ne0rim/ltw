@@ -7,11 +7,12 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use crate::components::WeaponSpec;
+use crate::components::{Veterancy, WeaponSpec, WeaponStats};
 use crate::map::MapDef;
 
 const SURNAMES_JSON: &str = include_str!("../data/surnames.json");
 const WEAPONS_JSON: &str = include_str!("../data/weapons.json");
+const VETERANCY_JSON: &str = include_str!("../data/veterancy.json");
 
 /// Every map file, by id. Add a new map by adding its file here.
 const MAP_FILES: &[(&str, &str)] = &[("test_area", include_str!("../data/maps/test_area.json"))];
@@ -33,7 +34,7 @@ pub static WEAPONS: LazyLock<HashMap<&'static str, WeaponSpec>> = LazyLock::new(
                     id,
                     name: w.name,
                     caliber: w.caliber,
-                    magazine_capacity: w.magazine_capacity,
+                    stats: w.stats,
                 },
             )
         })
@@ -63,8 +64,27 @@ pub fn map(id: &str) -> Option<MapDef> {
 struct WeaponFile {
     name: &'static str,
     caliber: &'static str,
-    magazine_capacity: u32,
+    stats: WeaponStats,
 }
+
+/// Numbers for each veterancy level (from `veterancy.json`).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize)]
+pub struct VeterancyStats {
+    /// The shooter's own aiming error, 1 standard deviation in milliradians.
+    pub aim_error_mrad: f32,
+}
+
+pub static VETERANCY: LazyLock<HashMap<Veterancy, VeterancyStats>> = LazyLock::new(|| {
+    let table: HashMap<Veterancy, VeterancyStats> =
+        serde_json::from_str(VETERANCY_JSON).expect("core/data/veterancy.json is invalid");
+    for level in Veterancy::ALL {
+        assert!(
+            table.contains_key(&level),
+            "veterancy.json has no {level:?}"
+        );
+    }
+    table
+});
 
 #[cfg(test)]
 mod tests {
@@ -75,5 +95,6 @@ mod tests {
         assert!(!SURNAMES.is_empty());
         assert!(!WEAPONS.is_empty());
         assert!(!MAPS.is_empty());
+        assert_eq!(VETERANCY.len(), Veterancy::ALL.len());
     }
 }

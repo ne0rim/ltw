@@ -7,8 +7,8 @@ use bevy_ecs::query::{QueryData, Without};
 use bevy_ecs::system::Query;
 
 use crate::components::{
-    Activity, Controller, CurrentOrder, FireControl, FormationSlot, GoalFacing, Inventory, Members,
-    MoveGoal, PlayerControlled, Transform, Unit,
+    Activity, Controller, CurrentOrder, FireControl, FormationSlot, GoalFacing, Inventory,
+    LifeState, Members, MoveGoal, PlayerControlled, Transform, Unit,
 };
 
 /// A unit (platoon or section) and the order it is carrying out.
@@ -33,6 +33,7 @@ pub struct OrderedSoldier {
     pub activity: &'static mut Activity,
     pub fire: &'static mut FireControl,
     pub inventory: Option<&'static Inventory>,
+    pub life: &'static LifeState,
 }
 
 /// Every AI soldier (orders never touch the player-controlled one).

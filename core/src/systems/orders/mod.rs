@@ -36,9 +36,6 @@ pub mod tuning {
     /// Seconds between bursts for machine gunners (min, max).
     pub const GUNNER_INTERVAL: (f32, f32) = (0.9, 1.7);
     pub const GUNNER_BURST: u32 = 3;
-    /// Impact scatter around the target: base radius + per metre of range.
-    pub const SPREAD_BASE: f32 = 0.8;
-    pub const SPREAD_PER_METRE: f32 = 0.03;
     /// Longest random delay before a unit's first shots (s), so its soldiers
     /// don't all fire in unison.
     pub const FIRST_SHOT_STAGGER: f32 = 1.2;

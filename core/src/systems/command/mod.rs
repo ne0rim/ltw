@@ -28,6 +28,9 @@ pub use section::command_sections;
 pub mod tuning {
     /// How far back from the objective a fire base sets up (m).
     pub const FIRE_BASE_RANGE: f32 = 150.0;
+    /// Once the assault goes in, the fire base shifts its fire this far
+    /// beyond the objective (m).
+    pub const SHIFT_FIRE_BEYOND: f32 = 80.0;
     /// Form-up point for an assault: distance back from the objective (m)...
     pub const FORM_UP_BACK: f32 = 110.0;
     /// ...and out to the flank (m).

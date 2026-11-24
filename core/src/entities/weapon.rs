@@ -18,8 +18,8 @@ pub fn spawn_weapon(world: &mut World, spec: WeaponSpec, holder: Option<Entity>)
         .spawn(WeaponBundle {
             state: WeaponState {
                 weapon_id: spec.id.to_string(),
-                magazine_capacity: spec.magazine_capacity,
-                magazine: Some(spec.magazine_capacity),
+                stats: spec.stats,
+                magazine: Some(spec.stats.magazine_capacity),
             },
             holder: Holder(holder),
         })

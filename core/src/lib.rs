@@ -1,5 +1,6 @@
 //! Lead the Way simulation core. Pure Rust, no Godot dependency.
 //!
+//! - `ballistics`  : accuracy formula, bullet paths, hit tests (pure maths)
 //! - `components/` : data attached to entities (one file per area)
 //! - `entities/`   : what each kind of entity is made of, and spawning
 //! - `systems/`    : per-tick logic
@@ -10,6 +11,7 @@
 //! - `rng`         : seeded random numbers
 //! - `save`        : save files (world <-> plain data)
 
+pub mod ballistics;
 pub mod components;
 pub mod data;
 pub mod entities;
