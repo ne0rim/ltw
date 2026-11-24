@@ -24,6 +24,7 @@ use crate::entities::platoon::PlatoonSpec;
 use crate::entities::soldier::Loadout;
 use crate::entities::{platoon, player};
 use crate::events::{SimEvent, SimEvents};
+use crate::map::{ActiveMap, MapDef};
 use crate::rng::SimRng;
 use crate::save::{self, SaveError, SaveGame};
 use crate::systems::{
@@ -294,6 +295,37 @@ impl Sim {
                 side: spec.side,
             });
         unit_id
+    }
+
+    /// Start a map: spawn every force it defines (see [`crate::map`]) and
+    /// remember it as the active map. Returns an error for an unknown map id.
+    pub fn start_map(&mut self, id: &str) -> Result<(), String> {
+        let def = crate::data::map(id).ok_or_else(|| format!("no map called {id:?}"))?;
+        self.start_map_def(def);
+        Ok(())
+    }
+
+    /// Start a map from a definition (for maps built in code, e.g. tests).
+    pub fn start_map_def(&mut self, def: MapDef) {
+        for force in &def.forces {
+            let spec = PlatoonSpec {
+                side: force.side,
+                controller: force.controller,
+                name: &force.name,
+                callsign: &force.callsign,
+                commander: force.led_by_player.then_some(self.player),
+            };
+            let unit_id = self.spawn_platoon_with(spec, force.position, force.yaw());
+            if let Some(task) = force.task {
+                self.assign_task(unit_id, task);
+            }
+        }
+        self.world.insert_resource(ActiveMap(def));
+    }
+
+    /// The map being played, if one was started (or loaded).
+    pub fn map(&self) -> Option<&MapDef> {
+        self.world.get_resource::<ActiveMap>().map(|m| &m.0)
     }
 
     /// Give a unit a task (what the script or a higher commander wants done).
@@ -725,7 +757,7 @@ fn unit_status(world: &World, members: &[Entity], order: Option<Order>) -> &'sta
         .collect();
     match order {
         None => "idle",
-        Some(Order::MoveTo { .. }) => {
+        Some(Order::MoveTo { .. } | Order::Perimeter { .. }) => {
             if ai
                 .iter()
                 .any(|e| world.get::<MoveGoal>(*e).is_some_and(|g| g.0.is_some()))

@@ -4,11 +4,24 @@
 [ext_resource type="Script" path="res://scripts/hud_panel.gd" id="2_panel"]
 [ext_resource type="PackedScene" path="res://scenes/ui/crosshair.tscn" id="3_crosshair"]
 [ext_resource type="PackedScene" path="res://scenes/ui/tactical_map.tscn" id="4_map"]
+[ext_resource type="Script" path="res://scripts/compass.gd" id="5_compass"]
 
 [node name="HUD" type="CanvasLayer"]
 script = ExtResource("1_hud")
 
 [node name="Crosshair" parent="." instance=ExtResource("3_crosshair")]
+
+[node name="Compass" type="Control" parent="."]
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -300.0
+offset_top = 8.0
+offset_right = 300.0
+offset_bottom = 72.0
+grow_horizontal = 2
+mouse_filter = 2
+script = ExtResource("5_compass")
 
 [node name="DevPanel" type="PanelContainer" parent="."]
 visible = false

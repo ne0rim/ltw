@@ -27,7 +27,6 @@ fog_enabled = true
 fog_light_color = Color(0.78, 0.78, 0.78, 1)
 fog_density = 0.0012
 adjustment_enabled = true
-adjustment_saturation = 1.0
 
 [node name="Main" type="Node3D" unique_id=1677297843]
 script = ExtResource("1_main")
@@ -44,10 +43,11 @@ directional_shadow_max_distance = 250.0
 
 [node name="Terrain" type="Node3D" parent="." unique_id=2102137708]
 script = ExtResource("2_terrain")
+size_m = 1024.0
 
 [node name="Player" parent="." unique_id=1749561026 instance=ExtResource("3_player")]
 
-[node name="AmmoBox" parent="." node_paths=PackedStringArray("sim", "player", "terrain") instance=ExtResource("7_ammo")]
+[node name="AmmoBox" parent="." unique_id=541945542 node_paths=PackedStringArray("sim", "player", "terrain") instance=ExtResource("7_ammo")]
 transform = Transform3D(0.866025, 0, 0.5, 0, 1, 0, -0.5, 0, 0.866025, 4, 0, 165)
 sim = NodePath("../SimBridge")
 player = NodePath("../Player")

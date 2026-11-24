@@ -1,7 +1,9 @@
 //! AI command: how an AI-controlled unit turns its task into action.
 //!
-//! - `platoon` : a commander with sub-units picks a playbook and gives each
-//!   sub-unit a task, then moves the plan through its phases
+//! - `platoon` : a commander with sub-units picks a playbook for its task
+//!   (harbour when idle, linear or all-round defence, fire base + assault,
+//!   two up, bounding advance, patrol, withdraw) and gives each sub-unit a
+//!   task, then moves the plan through its phases
 //! - `section` : a unit without sub-units carries out its task by giving
 //!   itself orders (move, fire)
 //! - `geometry`: points around an objective (fire base, form-up, frontage)
@@ -16,6 +18,8 @@
 mod geometry;
 mod platoon;
 mod section;
+#[cfg(test)]
+mod tests;
 
 pub use platoon::command_platoons;
 pub use section::command_sections;
@@ -34,7 +38,23 @@ pub mod tuning {
     pub const RESERVE_BACK: f32 = 70.0;
     /// Width of a platoon's defensive frontage, centre to flank (m).
     pub const DEFENCE_FRONTAGE: f32 = 40.0;
-    /// Beyond this distance a fire base is worth the time; closer, a direct
-    /// assault is favoured. Only a weighting: either playbook can be picked.
+    /// Beyond this distance a fire base or bounding is worth the time; closer,
+    /// a direct assault is favoured. Only weightings: any playbook can happen.
     pub const LONG_ATTACK: f32 = 120.0;
+    /// Beyond this, bounding is as likely as a fire base.
+    pub const VERY_LONG_ATTACK: f32 = 250.0;
+    /// How far each bound carries the moving section past the furthest line (m).
+    pub const BOUND: f32 = 50.0;
+    /// When bounding gets this close to the objective, the lead assaults (m).
+    pub const FINAL_ASSAULT_RANGE: f32 = 60.0;
+    /// Radius of an idle platoon's all-round perimeter (m).
+    pub const HARBOUR_RADIUS: f32 = 25.0;
+    /// Radius of an all-round defence (m).
+    pub const ALL_ROUND_RADIUS: f32 = 40.0;
+    /// Radius of the HQ's small circle in the middle of a perimeter (m).
+    pub const HQ_HOLD_RADIUS: f32 = 6.0;
+    /// Radius a lone section holds all-round in (m).
+    pub const SECTION_HOLD_RADIUS: f32 = 8.0;
+    /// Distance between sections in a patrol wedge (m).
+    pub const PATROL_SPACING: f32 = 30.0;
 }

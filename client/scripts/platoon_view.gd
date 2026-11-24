@@ -27,12 +27,6 @@ var _effects: ShotEffects
 var _selected := PackedInt32Array()
 
 
-## Spawn the player's platoon in the sim, then show it (see `attach`).
-func spawn_platoon(sim: SimBridge, terrain: Terrain, origin: Vector3, yaw: float) -> void:
-	sim.spawn_platoon(origin, yaw)
-	attach(sim, terrain)
-
-
 ## Start showing the sim's soldiers (both sides). Visuals for soldiers added
 ## later, such as an enemy platoon, appear on the next refresh.
 func attach(sim: SimBridge, terrain: Terrain) -> void:
@@ -42,12 +36,6 @@ func attach(sim: SimBridge, terrain: Terrain) -> void:
 	_effects.name = "ShotEffects"
 	add_child(_effects)
 	my_side = _sim.get_player_side()
-	# The player gets a side ring too (looking down, you can see your own).
-	if commander and not commander.has_node("SideRing"):
-		var ring := SideRing.new()
-		ring.name = "SideRing"
-		commander.add_child(ring)  # the player's origin is at their feet
-		ring.set_side(my_side)
 	refresh()
 	_sim.ticked.connect(func(_t: int, _n: int) -> void: refresh())
 	_sim.sim_event.connect(_on_sim_event)

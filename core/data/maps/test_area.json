@@ -1,0 +1,27 @@
+{
+  "id": "test_area",
+  "name": "Test area",
+  "size_m": 1024.0,
+  "forces": [
+    {
+      "side": "Blue",
+      "controller": "Player",
+      "led_by_player": true,
+      "name": "1 Platoon",
+      "callsign": "11",
+      "position": [0.0, 0.0, 400.0],
+      "facing_deg": 0.0,
+      "task": null
+    },
+    {
+      "side": "Red",
+      "controller": "Ai",
+      "led_by_player": false,
+      "name": "Enemy Platoon",
+      "callsign": "E1",
+      "position": [0.0, 0.0, -400.0],
+      "facing_deg": 180.0,
+      "task": null
+    }
+  ]
+}

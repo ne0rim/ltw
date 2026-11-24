@@ -5,8 +5,8 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 
 use crate::components::{
-    Activity, FireControl, FormationSlot, Gait, Health, Inventory, LifeState, MoveGoal, Role, Side,
-    Soldier, SquadMember, Stance, Transform, Velocity, WeaponSpec, weapon_spec,
+    Activity, FireControl, FormationSlot, Gait, GoalFacing, Health, Inventory, LifeState, MoveGoal,
+    Role, Side, Soldier, SquadMember, Stance, Transform, Velocity, WeaponSpec, weapon_spec,
 };
 
 use super::weapon::spawn_weapon;
@@ -30,6 +30,7 @@ pub struct SoldierBundle {
     pub health: Health,
     pub life: LifeState,
     pub goal: MoveGoal,
+    pub goal_facing: GoalFacing,
     pub activity: Activity,
     pub fire: FireControl,
     pub side: Side,
@@ -45,6 +46,7 @@ impl SoldierBundle {
             health: Health::default(),
             life: LifeState::Healthy,
             goal: MoveGoal::default(),
+            goal_facing: GoalFacing::default(),
             activity: Activity::default(),
             fire: FireControl::default(),
             side: Side::default(),

@@ -1,12 +1,19 @@
 //! AI units without sub-units (sections, platoon HQ): carry out the task by
 //! giving themselves orders.
 //!
-//!   New      → order a move to the task's position          → Moving
+//!   New      → order the move the task needs                    → Moving
 //!   Moving   → arrived (the move order cleared):
-//!                SupportByFire → order a fire mission        → Firing
-//!                Defend        →                             → InPosition
-//!                Attack/MoveTo →                             → Done
+//!                SupportByFire             → order a fire mission → Firing
+//!                Defend, Hold, Perimeter   →                      → InPosition
+//!                Attack, MoveTo, Withdraw  →                      → Done
+//!                Patrol                    → next waypoint        → New
 //!   Firing   → fire mission finished → fire again while anyone has ammo
+//!
+//! "The move the task needs" is a formation move (`Order::MoveTo`) for most
+//! tasks, and a perimeter (`Order::Perimeter`, everyone facing outward) for
+//! Hold and Perimeter.
+
+use std::f32::consts::TAU;
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::query::QueryData;
@@ -19,6 +26,7 @@ use crate::components::{
 use crate::systems::orders::{OrderRequest, PendingOrders};
 
 use super::geometry::{centre, direction, facing};
+use super::tuning;
 
 /// An AI unit carrying out a task itself.
 #[derive(QueryData)]
@@ -70,24 +78,26 @@ pub fn command_sections(
 
         match stage {
             TaskStage::New => {
-                let (target, face) = move_for(kind, here);
-                issue(Order::MoveTo {
-                    target,
-                    facing: face,
-                });
+                issue(move_order(kind, here));
                 u.task.set_stage(TaskStage::Moving);
             }
-            TaskStage::Moving if u.current.order.is_none() => {
-                let next = match kind {
-                    TaskKind::SupportByFire { target, .. } => {
-                        issue(Order::FireAt { target });
-                        TaskStage::Firing
-                    }
-                    TaskKind::Defend { .. } => TaskStage::InPosition,
-                    TaskKind::Attack { .. } | TaskKind::MoveTo { .. } => TaskStage::Done,
-                };
-                u.task.set_stage(next);
-            }
+            TaskStage::Moving if u.current.order.is_none() => match kind {
+                TaskKind::SupportByFire { target, .. } => {
+                    issue(Order::FireAt { target });
+                    u.task.set_stage(TaskStage::Firing);
+                }
+                TaskKind::Defend { .. } | TaskKind::Hold { .. } | TaskKind::Perimeter { .. } => {
+                    u.task.set_stage(TaskStage::InPosition)
+                }
+                TaskKind::Attack { .. } | TaskKind::MoveTo { .. } | TaskKind::Withdraw { .. } => {
+                    u.task.set_stage(TaskStage::Done)
+                }
+                TaskKind::Patrol { route, leg } => {
+                    // On to the next waypoint (looping), issued next tick.
+                    let next = ((leg as usize + 1) % route.len().max(1)) as u8;
+                    *u.task = Task::new(TaskKind::Patrol { route, leg: next });
+                }
+            },
             TaskStage::Firing if u.current.order.is_none() => {
                 // Keep suppressing while anyone still has rounds.
                 let any_ammo = u
@@ -106,18 +116,38 @@ pub fn command_sections(
     }
 }
 
-/// Where to move for a task, and which way to face on arrival.
-fn move_for(kind: TaskKind, here: Option<[f32; 3]>) -> ([f32; 3], f32) {
+/// The move that starts a task, given where the unit is now.
+fn move_order(kind: TaskKind, here: Option<[f32; 3]>) -> Order {
+    let walk = |target: [f32; 3], facing: f32| Order::MoveTo { target, facing };
+    let toward = |to: [f32; 3]| facing(direction(here.unwrap_or(to), to));
     match kind {
-        TaskKind::Attack { objective } => {
-            let from = here.unwrap_or(objective);
-            (objective, facing(direction(from, objective)))
-        }
+        TaskKind::Attack { objective } => walk(objective, toward(objective)),
         TaskKind::SupportByFire { position, target } => {
-            (position, facing(direction(position, target)))
+            walk(position, facing(direction(position, target)))
         }
-        TaskKind::Defend { position, facing } | TaskKind::MoveTo { position, facing } => {
-            (position, facing)
+        TaskKind::Defend { position, facing }
+        | TaskKind::MoveTo { position, facing }
+        | TaskKind::Withdraw { position, facing } => walk(position, facing),
+        TaskKind::Patrol { route, leg } => {
+            let to = route.get(leg as usize);
+            walk(to, toward(to))
         }
+        TaskKind::Hold { position } => Order::Perimeter {
+            centre: position,
+            radius: tuning::SECTION_HOLD_RADIUS,
+            start: 0.0,
+            sweep: TAU,
+        },
+        TaskKind::Perimeter {
+            centre,
+            radius,
+            start,
+            sweep,
+        } => Order::Perimeter {
+            centre,
+            radius,
+            start,
+            sweep,
+        },
     }
 }

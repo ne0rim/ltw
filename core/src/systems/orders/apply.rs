@@ -72,6 +72,14 @@ pub fn apply_orders(
             Order::MoveTo { target, facing } => {
                 move_to::assign(&recipients, target, facing, &mut soldiers)
             }
+            Order::Perimeter {
+                centre,
+                radius,
+                start,
+                sweep,
+            } => {
+                move_to::assign_perimeter(&recipients, centre, radius, start, sweep, &mut soldiers)
+            }
             Order::FireAt { target } => {
                 fire_at::assign(&recipients, target, &mut rng, &mut soldiers, &weapons)
             }

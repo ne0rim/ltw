@@ -14,7 +14,6 @@ use godot::meta::ToGodot;
 use godot::obj::{Base, WithUserSignals};
 use godot::register::{GodotClass, godot_api};
 
-use ltw_core::components::{Side, TaskKind};
 use ltw_core::sim::{Sim, SimConfig, defaults};
 use ltw_core::{Gait, PlayerReport, SimEvent, Stance, Transform, Velocity};
 
@@ -175,60 +174,35 @@ impl SimBridge {
 
     // ------------------------------------------------------------ platoon
 
-    /// Create a platoon (HQ of 6 + 3 sections of 10) around the player, who
-    /// becomes its platoon commander.
-    /// Returns the platoon's unit id.
+    /// Start a map from the core's map files (e.g. "test_area"): spawns every
+    /// force on it, both sides. Returns false for an unknown map.
     #[func]
-    fn spawn_platoon(&mut self, origin: Vector3, yaw: f32) -> i64 {
-        self.sim.spawn_platoon([origin.x, origin.y, origin.z], yaw) as i64
+    fn start_map(&mut self, id: GString) -> bool {
+        match self.sim.start_map(&id.to_string()) {
+            Ok(()) => true,
+            Err(e) => {
+                godot_error!("start_map: {e}");
+                false
+            }
+        }
     }
 
-    /// Create an AI-commanded platoon of the same build for `side` ("blue" or
-    /// "red"), facing `yaw`. It waits until given a task. Returns its unit id,
-    /// or -1 for an unknown side.
+    /// The map being played: id, name, size_m, and where the player's platoon
+    /// starts (player_start, player_yaw). Empty if no map is active.
     #[func]
-    fn spawn_ai_platoon(
-        &mut self,
-        side: GString,
-        name: GString,
-        callsign: GString,
-        origin: Vector3,
-        yaw: f32,
-    ) -> i64 {
-        let Some(side) = Side::from_name(&side.to_string()) else {
-            godot_error!("spawn_ai_platoon: unknown side {side}");
-            return -1;
+    fn get_map(&self) -> VarDictionary {
+        let Some(map) = self.sim.map() else {
+            return VarDictionary::new();
         };
-        self.sim.spawn_ai_platoon(
-            side,
-            &name.to_string(),
-            &callsign.to_string(),
-            [origin.x, origin.y, origin.z],
-            yaw,
-        ) as i64
-    }
-
-    /// Task a unit to attack (take) `objective`. An AI unit plans it itself.
-    #[func]
-    fn assign_attack(&mut self, unit_id: i64, objective: Vector3) -> bool {
-        self.sim.assign_task(
-            unit_id as u32,
-            TaskKind::Attack {
-                objective: [objective.x, objective.y, objective.z],
-            },
-        )
-    }
-
-    /// Task a unit to defend `position`, facing `facing` (yaw).
-    #[func]
-    fn assign_defend(&mut self, unit_id: i64, position: Vector3, facing: f32) -> bool {
-        self.sim.assign_task(
-            unit_id as u32,
-            TaskKind::Defend {
-                position: [position.x, position.y, position.z],
-                facing,
-            },
-        )
+        let start = map.forces.iter().find(|f| f.led_by_player);
+        vdict! {
+            "id" => &map.id.to_variant(),
+            "name" => &map.name.to_variant(),
+            "size_m" => &map.size_m.to_variant(),
+            "has_player_start" => &start.is_some().to_variant(),
+            "player_start" => &v3(start.map_or([0.0; 3], |f| f.position)).to_variant(),
+            "player_yaw" => &start.map_or(0.0, |f| f.yaw()).to_variant(),
+        }
     }
 
     /// "blue" or "red": the side the player fights for.

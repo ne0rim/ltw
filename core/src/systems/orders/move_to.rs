@@ -1,4 +1,5 @@
-//! `Order::MoveTo`: walk to a point and form up.
+//! Orders that move soldiers: `Order::MoveTo` (walk to a point and form up)
+//! and `Order::Perimeter` (spread round an arc facing outward).
 
 use std::collections::HashMap;
 
@@ -7,8 +8,8 @@ use bevy_ecs::query::{QueryData, Without};
 use bevy_ecs::system::{Query, Res, ResMut};
 
 use crate::components::{
-    Activity, CurrentOrder, Gait, MoveGoal, Order, PlayerControlled, SquadMember, Transform,
-    Velocity, place, yaw_towards,
+    Activity, CurrentOrder, Gait, GoalFacing, MoveGoal, Order, PlayerControlled, SquadMember,
+    Transform, Velocity, place, yaw_towards,
 };
 use crate::events::{SimEvent, SimEvents};
 use crate::sim::SimClock;
@@ -37,9 +38,39 @@ pub fn assign(units: &[Recipient], target: [f32; 3], facing: f32, soldiers: &mut
         for m in &u.members {
             if let Ok(mut s) = soldiers.get_mut(*m) {
                 s.goal.0 = Some(place(anchor, facing, s.slot.right, s.slot.forward));
+                s.goal_facing.0 = Some(facing);
                 *s.activity = Activity::Moving;
                 s.fire.target = None;
             }
+        }
+    }
+}
+
+/// Spread the units' soldiers evenly along an arc around `centre`, each one
+/// facing straight out. Several units share the arc, one after another.
+pub fn assign_perimeter(
+    units: &[Recipient],
+    centre: [f32; 3],
+    radius: f32,
+    start: f32,
+    sweep: f32,
+    soldiers: &mut AiSoldiers,
+) {
+    let members: Vec<Entity> = units
+        .iter()
+        .flat_map(|u| u.members.iter().copied())
+        .filter(|m| soldiers.contains(*m))
+        .collect();
+    let n = members.len().max(1) as f32;
+    for (i, m) in members.iter().enumerate() {
+        // Clockwise from `start` (yaw decreases clockwise), centred in each
+        // soldier's share of the arc.
+        let yaw = start - sweep * (i as f32 + 0.5) / n;
+        if let Ok(mut s) = soldiers.get_mut(*m) {
+            s.goal.0 = Some(place(centre, yaw, 0.0, radius));
+            s.goal_facing.0 = Some(yaw);
+            *s.activity = Activity::Moving;
+            s.fire.target = None;
         }
     }
 }
@@ -71,6 +102,7 @@ fn average(points: impl Iterator<Item = [f32; 2]>) -> [f32; 2] {
 #[query_data(mutable)]
 pub struct Walker {
     member: &'static SquadMember,
+    goal_facing: &'static GoalFacing,
     transform: &'static mut Transform,
     velocity: &'static mut Velocity,
     gait: &'static mut Gait,
@@ -93,11 +125,14 @@ pub fn move_soldiers(
         if dist <= tuning::ARRIVE_DISTANCE {
             w.transform.position[0] = g[0];
             w.transform.position[2] = g[2];
-            if let Ok(CurrentOrder {
+            if let Some(face) = w.goal_facing.0 {
+                w.transform.yaw = face;
+            } else if let Ok(CurrentOrder {
                 order: Some(Order::MoveTo { facing, .. }),
                 ..
             }) = orders.get(w.member.squad)
             {
+                // Saves from before per-soldier facing existed.
                 w.transform.yaw = *facing;
             }
             w.goal.0 = None;
@@ -125,7 +160,7 @@ pub fn report_in_position(
     goals: Query<&MoveGoal, Without<PlayerControlled>>,
 ) {
     for mut u in &mut units {
-        if !matches!(u.current.order, Some(Order::MoveTo { .. })) {
+        if !u.current.order.is_some_and(|o| o.is_move()) {
             continue;
         }
         let still_moving = u

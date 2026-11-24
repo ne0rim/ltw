@@ -6,7 +6,7 @@ extends Node3D
 
 @export_group("Size")
 ## Width and depth of the terrain, in metres.
-@export var size_m: float = 512.0:
+@export var size_m: float = 1024.0:
 	set(v): size_m = maxf(v, 8.0); _queue_regen()
 ## Distance between height samples, in metres. Smaller means more detail and slower generation.
 @export var cell_size_m: float = 2.0:
@@ -104,7 +104,13 @@ func _queue_regen() -> void:
 	if not is_inside_tree() or _regen_queued:
 		return
 	_regen_queued = true
-	generate.call_deferred()
+	_regen_if_queued.call_deferred()
+
+
+## A queued regeneration is skipped if `generate()` already ran in between.
+func _regen_if_queued() -> void:
+	if _regen_queued:
+		generate()
 
 
 func _build_heights() -> void:

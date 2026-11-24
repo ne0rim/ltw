@@ -3,8 +3,8 @@
 //! same state. Units acknowledge orders and report back through `SimEvent`s.
 //!
 //! - `apply`   : take queued orders, hand each to its order type, acknowledge
-//! - `move_to` : `Order::MoveTo` - formation goals, walking, "in position";
-//!   the order ends when everyone has arrived
+//! - `move_to` : `Order::MoveTo` / `Order::Perimeter` - formation or arc goals,
+//!   walking, "in position"; the order ends when everyone has arrived
 //! - `fire_at` : `Order::FireAt` - fire missions, shooting, magazine changes;
 //!   each soldier fires one magazine's worth, then the order ends
 //! - `queries` : named queries shared by the order systems

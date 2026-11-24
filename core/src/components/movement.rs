@@ -86,6 +86,13 @@ impl Gait {
     }
 }
 
+/// Which way the soldier turns to face on reaching their move goal (yaw).
+/// None = keep facing the way they walked.
+#[derive(
+    Component, Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize,
+)]
+pub struct GoalFacing(pub Option<f32>);
+
 /// Where the soldier is walking to (None = not moving).
 #[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
 pub struct MoveGoal(pub Option<[f32; 3]>);

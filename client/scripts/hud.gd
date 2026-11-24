@@ -6,6 +6,8 @@ extends CanvasLayer
 ##   Ctrl+Alt+2  Controls  every key
 ##   Ctrl+Alt+3  Game      you, your weapon, the platoon and each section
 ##   T           Tactical map (hides the panels while open)
+##
+## The compass at the top always shows which way the player faces.
 
 @export var sim: SimBridge
 @export var player: Player
@@ -19,6 +21,7 @@ extends CanvasLayer
 @onready var controls_panel: HudPanel = $ControlsPanel
 @onready var game_panel: HudPanel = $GamePanel
 @onready var tactical_map: TacticalMap = $TacticalMap
+@onready var compass: Compass = $Compass
 
 const CONTROLS := [
 	"Move",
@@ -85,6 +88,8 @@ func _toggle_map() -> void:
 
 func _process(_delta: float) -> void:
 	crosshair.visible = not player.is_aiming and not tactical_map.visible
+	compass.visible = not tactical_map.visible
+	compass.heading_deg = Compass.heading_from_yaw(player.global_rotation.y)
 	if dev_panel.visible:
 		dev_panel.set_lines(_dev_lines())
 	if game_panel.visible:

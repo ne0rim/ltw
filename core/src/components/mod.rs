@@ -16,11 +16,14 @@ pub mod transform;
 pub mod weapon;
 
 pub use combat::{Activity, FireControl};
-pub use command::{Controller, Issuer, Plan, PlanPhase, Playbook, Side, Task, TaskKind, TaskStage};
+pub use command::{
+    Controller, Issuer, MAX_ROUTE, Plan, PlanPhase, Playbook, Route, Side, Task, TaskKind,
+    TaskStage,
+};
 pub use health::{Health, LifeState};
 pub use identity::{CommissionedOfficer, Rank, Role, Soldier};
 pub use inventory::{Inventory, swap_magazine};
-pub use movement::{Gait, MoveGoal, Stance};
+pub use movement::{Gait, GoalFacing, MoveGoal, Stance};
 pub use orders::{CurrentOrder, Order};
 pub use organisation::{
     FireTeam, FormationSlot, Leader, Members, ParentUnit, SquadMember, Unit, UnitKind,

@@ -26,14 +26,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::{
     Activity, CommissionedOfficer, Controller, CurrentOrder, FireControl, FireTeam, FormationSlot,
-    Gait, Health, Holder, Inventory, Leader, LifeState, Members, MoveGoal, Order, ParentUnit, Plan,
-    PlayerControlled, Rank, Role, Side, Soldier, SquadMember, Stance, Task, Transform, Unit,
-    UnitKind, Velocity, WeaponState, weapon_spec,
+    Gait, GoalFacing, Health, Holder, Inventory, Leader, LifeState, Members, MoveGoal, Order,
+    ParentUnit, Plan, PlayerControlled, Rank, Role, Side, Soldier, SquadMember, Stance, Task,
+    Transform, Unit, UnitKind, Velocity, WeaponState, weapon_spec,
 };
 use crate::entities::platoon::NextIds;
 use crate::entities::soldier::{BodyBundle, SoldierBundle};
 use crate::entities::unit::UnitBundle;
 use crate::entities::weapon::WeaponBundle;
+use crate::map::ActiveMap;
 use crate::rng::SimRng;
 use crate::sim::SimClock;
 
@@ -47,6 +48,9 @@ pub struct SaveGame {
     pub tick: u64,
     pub elapsed: f64,
     pub rng_state: u64,
+    /// Id of the map being played (None for saves made before maps existed).
+    #[serde(default)]
+    pub map_id: Option<String>,
     pub next_soldier_id: u32,
     pub next_unit_id: u32,
     /// The player's body. Also present as a soldier below once a platoon exists.
@@ -108,6 +112,8 @@ pub struct SoldierSave {
     pub health: Health,
     pub life: LifeState,
     pub move_goal: Option<[f32; 3]>,
+    #[serde(default)]
+    pub goal_facing: Option<f32>,
     pub activity: Activity,
     pub fire: FireControl,
     pub weapon: Option<WeaponSave>,
@@ -250,6 +256,7 @@ pub fn capture(world: &mut World, player: Entity) -> SaveGame {
         &Health,
         &LifeState,
         Option<&MoveGoal>,
+        Option<&GoalFacing>,
         Option<&Activity>,
         Option<&FireControl>,
         Option<&Inventory>,
@@ -260,7 +267,7 @@ pub fn capture(world: &mut World, player: Entity) -> SaveGame {
     let mut soldiers: Vec<SoldierSave> = sq
         .iter(world)
         .map(
-            |(s, m, f, t, st, h, l, goal, act, fire, inv, is_player, is_officer, side)| {
+            |(s, m, f, t, st, h, l, goal, gface, act, fire, inv, is_player, is_officer, side)| {
                 let inv = inv.cloned().unwrap_or_default();
                 let weapon = inv
                     .primary
@@ -286,6 +293,7 @@ pub fn capture(world: &mut World, player: Entity) -> SaveGame {
                     health: *h,
                     life: *l,
                     move_goal: goal.and_then(|g| g.0),
+                    goal_facing: gface.and_then(|g| g.0),
                     activity: act.copied().unwrap_or_default(),
                     fire: fire.copied().unwrap_or_default(),
                     weapon,
@@ -306,6 +314,7 @@ pub fn capture(world: &mut World, player: Entity) -> SaveGame {
         tick: clock.tick,
         elapsed: clock.elapsed,
         rng_state,
+        map_id: world.get_resource::<ActiveMap>().map(|m| m.0.id.clone()),
         next_soldier_id: ids.soldier,
         next_unit_id: ids.unit,
         player: PlayerSave {
@@ -328,6 +337,10 @@ pub fn restore(world: &mut World, player: Entity, save: &SaveGame) {
         elapsed: save.elapsed,
     });
     world.insert_resource(SimRng::new(save.rng_state));
+    // The map's definition comes from its data file, like weapon stats do.
+    if let Some(def) = save.map_id.as_deref().and_then(crate::data::map) {
+        world.insert_resource(ActiveMap(def));
+    }
     world.insert_resource(NextIds {
         soldier: save.next_soldier_id,
         unit: save.next_unit_id,
@@ -383,6 +396,7 @@ pub fn restore(world: &mut World, player: Entity, save: &SaveGame) {
         bundle.health = s.health;
         bundle.life = s.life;
         bundle.goal = MoveGoal(s.move_goal);
+        bundle.goal_facing = GoalFacing(s.goal_facing);
         bundle.activity = s.activity;
         bundle.fire = s.fire;
         bundle.side = s.side;

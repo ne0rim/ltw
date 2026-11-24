@@ -79,6 +79,83 @@ pub enum TaskKind {
         position: [f32; 3],
         target: [f32; 3],
     },
+    /// No orders: stay here with all-round security. This is what an AI unit
+    /// does when it has nothing else to do.
+    Hold { position: [f32; 3] },
+    /// Take a share of a perimeter: spread along an arc round `centre`, facing
+    /// outward. The arc starts at yaw `start` and runs `sweep` radians
+    /// clockwise.
+    Perimeter {
+        centre: [f32; 3],
+        radius: f32,
+        start: f32,
+        sweep: f32,
+    },
+    /// Walk a route of waypoints in order, then start again from the first.
+    /// `leg` is the waypoint being walked to.
+    Patrol {
+        route: Route,
+        #[serde(default)]
+        leg: u8,
+    },
+    /// Fall back to `position`, then defend it facing `facing` (toward the
+    /// threat).
+    Withdraw { position: [f32; 3], facing: f32 },
+}
+
+/// Most waypoints a route can have.
+pub const MAX_ROUTE: usize = 8;
+
+/// A patrol route: up to `MAX_ROUTE` waypoints. Written in data files as a
+/// plain list of points, e.g. `[[0, 0, -400], [200, 0, -300]]`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(from = "Vec<[f32; 3]>", into = "Vec<[f32; 3]>")]
+pub struct Route {
+    points: [[f32; 3]; MAX_ROUTE],
+    len: u8,
+}
+
+impl Route {
+    /// A route through `points` (extra points past `MAX_ROUTE` are dropped).
+    pub fn new(points: &[[f32; 3]]) -> Self {
+        let mut route = Self {
+            points: [[0.0; 3]; MAX_ROUTE],
+            len: points.len().min(MAX_ROUTE) as u8,
+        };
+        for (slot, p) in route.points.iter_mut().zip(points) {
+            *slot = *p;
+        }
+        route
+    }
+    pub fn points(&self) -> &[[f32; 3]] {
+        &self.points[..self.len as usize]
+    }
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+    /// Waypoint `i`, wrapping round to the start.
+    pub fn get(&self, i: usize) -> [f32; 3] {
+        if self.is_empty() {
+            [0.0; 3]
+        } else {
+            self.points[i % self.len()]
+        }
+    }
+}
+
+impl From<Vec<[f32; 3]>> for Route {
+    fn from(points: Vec<[f32; 3]>) -> Self {
+        Self::new(&points)
+    }
+}
+
+impl From<Route> for Vec<[f32; 3]> {
+    fn from(route: Route) -> Self {
+        route.points().to_vec()
+    }
 }
 
 impl TaskKind {
@@ -88,6 +165,10 @@ impl TaskKind {
             Self::Defend { .. } => "defend",
             Self::MoveTo { .. } => "move",
             Self::SupportByFire { .. } => "support by fire",
+            Self::Hold { .. } => "hold",
+            Self::Perimeter { .. } => "perimeter",
+            Self::Patrol { .. } => "patrol",
+            Self::Withdraw { .. } => "withdraw",
         }
     }
     /// The point the task is about (for maps and UI).
@@ -96,7 +177,11 @@ impl TaskKind {
             Self::Attack { objective } => objective,
             Self::Defend { position, .. }
             | Self::MoveTo { position, .. }
-            | Self::SupportByFire { position, .. } => position,
+            | Self::SupportByFire { position, .. }
+            | Self::Hold { position }
+            | Self::Withdraw { position, .. } => position,
+            Self::Perimeter { centre, .. } => centre,
+            Self::Patrol { route, leg } => route.get(leg as usize),
         }
     }
 }
@@ -169,16 +254,33 @@ impl Issuer {
     }
 }
 
-/// How a commander has decided to carry out an attack or defence.
+/// How a commander has decided to carry out their task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Playbook {
+    // Attack
     /// One section suppresses from a fire base while the others assault from
     /// a flank.
     FireBaseAssault,
     /// Two sections advance abreast onto the objective; one follows in reserve.
     TwoUp,
-    /// Sections spread across a frontage, facing the threat.
+    /// Two sections leapfrog toward the objective, one moving while the other
+    /// watches, then assault together.
+    BoundingAdvance,
+    // Defend
+    /// Sections spread across a frontage, facing the threat. (Saved as
+    /// "Defend" from before there were other defences.)
     Defend,
+    /// Sections share a perimeter round the position, facing every way.
+    AllRoundDefence,
+    // Other tasks
+    /// Idle: all-round security where the unit stands.
+    Harbour,
+    /// Walk a route as a group, again and again.
+    Patrol,
+    /// Bound back to a rear position, then defend it.
+    Withdraw,
+    /// Every sub-unit is simply given the same task.
+    Direct,
 }
 
 impl Playbook {
@@ -186,7 +288,13 @@ impl Playbook {
         match self {
             Self::FireBaseAssault => "fire base + assault",
             Self::TwoUp => "two up",
-            Self::Defend => "defend",
+            Self::BoundingAdvance => "bounding advance",
+            Self::Defend => "linear defence",
+            Self::AllRoundDefence => "all-round defence",
+            Self::Harbour => "harbour",
+            Self::Patrol => "patrol",
+            Self::Withdraw => "withdraw",
+            Self::Direct => "direct",
         }
     }
 }
@@ -215,4 +323,36 @@ pub struct Plan {
     pub hq: Option<u32>,
     /// Direction of the attack or defence (x, z), fixed when the plan is made.
     pub axis: [f32; 2],
+    // Added after plans first shipped (defaults keep older saves loading):
+    /// Where the plan started (for bounding: distances are measured from here).
+    #[serde(default)]
+    pub start: [f32; 3],
+    /// Metres covered along `axis` so far (bounding).
+    #[serde(default)]
+    pub progress: f32,
+    /// The sub-unit that made the last bound (the next bound is someone else's).
+    #[serde(default)]
+    pub last_bounder: Option<u32>,
+    /// Waypoint the unit is heading for (patrols).
+    #[serde(default)]
+    pub leg: u32,
+}
+
+impl Plan {
+    /// A plan with no sub-units assigned yet.
+    pub fn new(playbook: Playbook, phase: PlanPhase, hq: Option<u32>, axis: [f32; 2]) -> Self {
+        Self {
+            playbook,
+            phase,
+            fire_base: None,
+            assault: Vec::new(),
+            reserve: None,
+            hq,
+            axis,
+            start: [0.0; 3],
+            progress: 0.0,
+            last_bounder: None,
+            leg: 0,
+        }
+    }
 }

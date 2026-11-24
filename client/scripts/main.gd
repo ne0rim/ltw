@@ -1,17 +1,14 @@
 extends Node3D
-## Test-map bootstrap: puts the player on the terrain, loads or spawns the
-## platoons in the Rust sim, and keeps the sim informed about the player.
-## For now it also plays the part of the mission script: it spawns the enemy
-## platoon at the far end of the map and gives it its task.
+## Test-map bootstrap. The Rust core owns the mission: which map, which forces
+## and where they start, and what they are doing. This script only:
+##   - loads the save, or asks the core to start `map_id`
+##   - sizes the terrain to the map and puts the player's body at its start
+##   - keeps the sim informed about the player.
 ## The on-screen panels live in the HUD (scripts/hud.gd).
 
 @export var spawn_height_offset: float = 2.0
-## How far from the map centre each platoon starts (metres): the player's to
-## the south, the enemy's to the north, facing each other.
-@export var start_distance_m: float = 170.0
-## What the enemy platoon is tasked with: attack your start position, defend
-## its own, or nothing.
-@export_enum("attack", "defend", "none") var enemy_task: String = "attack"
+## Map to start when there is no save (a file in core/data/maps/).
+@export var map_id: String = "test_area"
 ## Loaded when the game starts and written when the window is closed.
 @export var save_path: String = "user://save.json"
 
@@ -23,25 +20,38 @@ extends Node3D
 
 
 func _ready() -> void:
-	var home := _ground(0.0, start_distance_m)
-	_player.spawn_point = home + Vector3.UP * spawn_height_offset
-	_player.respawn()
-	_player.global_rotation.y = 0.0  # facing north, toward the enemy
 	_sim.sim_event.connect(_on_sim_event)
 
-	# The platoons live in Rust; the player is their platoon's commander.
-	# The Platoon node is in the scene; soldiers are built from the sim's roster.
-	if _sim.load_game(_os_save_path()):
-		_platoon.attach(_sim, _terrain)
+	var loaded := _sim.load_game(_os_save_path())
+	if not loaded and not _sim.start_map(map_id):
+		push_error("Could not start map %s" % map_id)
+	var map := _sim.get_map()
+	_fit_terrain(map)
+
+	# The player's body is Godot's: put it at the map's start for their platoon,
+	# or where the save says it was.
+	var start: Vector3 = map.get("player_start", Vector3.ZERO)
+	_player.spawn_point = _ground(start.x, start.z) + Vector3.UP * spawn_height_offset
+	if loaded:
 		_restore_player()
 	else:
-		_platoon.spawn_platoon(_sim, _terrain, home, 0.0)
-	if not _has_enemy():
-		_spawn_enemy(home)
+		_player.respawn()
+		_player.global_rotation.y = map.get("player_yaw", 0.0)
+
+	# Soldiers (both sides) are built from the sim's roster.
+	_platoon.attach(_sim, _terrain)
 
 	# The player's magazines come from their Rust inventory.
 	_view.magazine_source = func() -> int: return _sim.player_reload()
 	_view.fired.connect(func(_muzzle: Transform3D) -> void: _sim.report_player_rounds(_view.ammo))
+
+
+## The terrain covers the map: same size, regenerated if it differs.
+func _fit_terrain(map: Dictionary) -> void:
+	var size: float = map.get("size_m", _terrain.size_m)
+	if not is_equal_approx(size, _terrain.size_m):
+		_terrain.size_m = size
+		_terrain.generate()
 
 
 func _notification(what: int) -> void:
@@ -53,26 +63,6 @@ func _notification(what: int) -> void:
 
 func _ground(x: float, z: float) -> Vector3:
 	return Vector3(x, _terrain.get_height_at(x, z), z)
-
-
-func _has_enemy() -> bool:
-	var mine := _sim.get_player_side()
-	for u in _sim.get_units():
-		if u.side != mine:
-			return true
-	return false
-
-
-## The enemy platoon starts at the north end facing south, AI-commanded.
-func _spawn_enemy(player_home: Vector3) -> void:
-	var side := "red" if _sim.get_player_side() == "blue" else "blue"
-	var origin := _ground(0.0, -start_distance_m)
-	var id := _sim.spawn_ai_platoon(side, "Enemy Platoon", "E1", origin, PI)
-	match enemy_task:
-		"attack":
-			_sim.assign_attack(id, player_home)
-		"defend":
-			_sim.assign_defend(id, origin, PI)
 
 
 func _os_save_path() -> String:
