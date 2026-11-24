@@ -4,7 +4,7 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Query, ResMut};
 
-use crate::components::{Order, UnitKind};
+use crate::components::{Order, UnitKind, WeaponState};
 use crate::events::{SimEvent, SimEvents};
 use crate::rng::SimRng;
 
@@ -31,6 +31,7 @@ pub fn apply_orders(
     mut events: ResMut<SimEvents>,
     mut units: Query<OrderedUnit>,
     mut soldiers: AiSoldiers,
+    weapons: Query<&WeaponState>,
 ) {
     for (unit_ids, order) in std::mem::take(&mut pending.0) {
         // The platoon itself can't be ordered, only its sections and HQ.
@@ -53,7 +54,7 @@ pub fn apply_orders(
                 move_to::assign(&recipients, target, facing, &mut soldiers)
             }
             Order::FireAt { target } => {
-                fire_at::assign(&recipients, target, &mut rng, &mut soldiers)
+                fire_at::assign(&recipients, target, &mut rng, &mut soldiers, &weapons)
             }
         }
 

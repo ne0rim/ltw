@@ -4,6 +4,10 @@ extends Control
 ## every soldier in the platoon, unit orders, and a panel of unit stats.
 ## North (-Z) is up. Open and close it with `toggle()` (the HUD binds T).
 ##
+## Mouse: left-click a soldier to select their unit (Shift+click adds or
+## removes), left-click empty ground to clear the selection, right-click to
+## move the selected units there. They form up facing the way they travel.
+##
 ## The "area" is the whole test terrain for now. Later it becomes one part of
 ## a larger map, and the map gains terrain types and objects.
 
@@ -18,6 +22,8 @@ const DEAD_COLOR := Color(0.45, 0.45, 0.45)
 @export var scale_bar_m: float = 100.0
 ## Space around the map (pixels).
 @export var margin: float = 24.0
+## How close a click must be to a soldier to pick their unit (pixels).
+@export var pick_radius_px: float = 14.0
 
 @onready var _image: TextureRect = $MapImage
 @onready var _markers: Control = $Markers
@@ -65,6 +71,58 @@ func close() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
+func _gui_input(event: InputEvent) -> void:
+	var mb := event as InputEventMouseButton
+	if not mb or not mb.pressed or not _built or not _map_rect.has_point(mb.position):
+		return
+	if mb.button_index == MOUSE_BUTTON_LEFT:
+		_click_select(mb.position, mb.shift_pressed)
+		accept_event()
+	elif mb.button_index == MOUSE_BUTTON_RIGHT:
+		_click_move(mb.position)
+		accept_event()
+
+
+func _click_select(at: Vector2, add: bool) -> void:
+	var unit_id := _unit_at(at)
+	if add:
+		_command.toggle_unit(unit_id)
+	else:
+		_command.select_only(unit_id)
+
+
+func _click_move(at: Vector2) -> void:
+	var target := _to_world(at)
+	# Face the way the units travel: from their centre toward the target.
+	var from := Vector3.ZERO
+	var n := 0
+	for s in _platoon.soldiers:
+		if _command.selected.has(s.unit_id) and not s.is_player:
+			from += s.position
+			n += 1
+	var facing := _player.global_rotation.y
+	if n > 0:
+		var d := target - from / n
+		if Vector2(d.x, d.z).length() > 0.5:
+			facing = atan2(-d.x, -d.z)  # yaw 0 looks down -Z
+	_command.order_move_to(target, facing)
+
+
+## Unit of the soldier nearest to a screen point, or -1 if none is close.
+func _unit_at(at: Vector2) -> int:
+	var best := -1
+	var best_d := pick_radius_px
+	for s in _platoon.soldiers:
+		if s.life == "dead":
+			continue
+		var p := _to_map(_player.global_position if s.is_player else s.position)
+		var d := p.distance_to(at)
+		if d < best_d:
+			best_d = d
+			best = s.unit_id
+	return best
+
+
 func _process(_delta: float) -> void:
 	if not visible:
 		return
@@ -108,6 +166,13 @@ func _layout() -> void:
 	_image.size = _map_rect.size
 	_markers.position = Vector2.ZERO
 	_markers.size = size
+
+
+## Screen to world, on the ground.
+func _to_world(screen: Vector2) -> Vector3:
+	var uv := (screen - _map_rect.position) / _map_rect.size
+	var xz := _bounds.position + uv * _bounds.size
+	return Vector3(xz.x, _terrain.get_height_at(xz.x, xz.y), xz.y)
 
 
 ## World XZ to screen.
@@ -169,6 +234,8 @@ func _draw_markers() -> void:
 			continue
 		if s.life != "healthy":
 			c = c.darkened(0.45)
+		if _command.selected.has(s.unit_id):
+			m.draw_arc(p, 7.5, 0.0, TAU, 16, Color.WHITE, 1.5)
 		if s.slot == 0:  # section commander
 			m.draw_rect(Rect2(p - Vector2(4.5, 4.5), Vector2(9, 9)), Color.BLACK)
 			m.draw_rect(Rect2(p - Vector2(3.5, 3.5), Vector2(7, 7)), c)
@@ -277,5 +344,6 @@ func _squad_lines() -> PackedStringArray:
 			fit, u.soldier_ids.size(), wounded, down])
 		lines.append("   %s%s · %d rds" % [u.status, order, u.rounds])
 	lines.append("")
-	lines.append("T close · Ctrl+1-4 select units")
+	lines.append("Click a unit to select · Shift+click to add")
+	lines.append("Right-click to move selected · T close")
 	return lines

@@ -66,11 +66,22 @@ func toggle_unit(unit_id: int) -> void:
 
 
 func order_move() -> void:
+	order_move_to(aim_point(), player.global_rotation.y)
+
+
+## Order the selected units to move to `target`, forming up facing `facing` (yaw).
+func order_move_to(target: Vector3, facing: float) -> void:
 	if not _check_selection():
 		return
-	var target := aim_point()
-	sim.order_move(selected, target, player.global_rotation.y)
+	sim.order_move(selected, target, facing)
 	_order_feedback("move", target)
+
+
+## Select just this unit (or nothing, with -1).
+func select_only(unit_id: int) -> void:
+	selected = PackedInt32Array() if unit_id < 0 else PackedInt32Array([unit_id])
+	platoon.set_selected_units(selected)
+	selection_changed.emit(selected)
 
 
 func order_fire() -> void:

@@ -146,6 +146,7 @@ impl Sim {
                 systems::orders::apply_orders,
                 systems::orders::move_soldiers,
                 systems::orders::fire_control,
+                systems::orders::report_fire_complete,
                 systems::orders::report_in_position,
                 systems::player::watch_player_movement,
             )
@@ -600,7 +601,7 @@ fn unit_status(world: &World, members: &[Entity], order: Option<Order>) -> &'sta
         .filter(|e| world.get::<PlayerControlled>(*e).is_none())
         .collect();
     match order {
-        None => "holding",
+        None => "idle",
         Some(Order::MoveTo { .. }) => {
             if ai
                 .iter()
@@ -611,17 +612,8 @@ fn unit_status(world: &World, members: &[Entity], order: Option<Order>) -> &'sta
                 "in position"
             }
         }
-        Some(Order::FireAt { .. }) => {
-            if !ai.is_empty()
-                && ai
-                    .iter()
-                    .all(|e| world.get::<FireControl>(*e).is_some_and(|f| f.out_of_ammo))
-            {
-                "out of ammo"
-            } else {
-                "firing"
-            }
-        }
+        // Fire missions end (and the order clears) once everyone is done.
+        Some(Order::FireAt { .. }) => "firing",
     }
 }
 
@@ -632,8 +624,8 @@ mod tests {
     use bevy_ecs::system::{Query, ResMut};
 
     use crate::components::{
-        Activity, Gait, LifeState, PlayerControlled, PlayerReport, Rank, Role, Stance, Transform,
-        UnitKind, Velocity,
+        Activity, Gait, Inventory, LifeState, PlayerControlled, PlayerReport, Rank, Role, Stance,
+        Transform, UnitKind, Velocity, WeaponState,
     };
     use crate::events::SimEvent;
 
@@ -964,10 +956,9 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, SimEvent::UnitInPosition { unit_id, .. } if *unit_id == s1))
         );
-        assert_eq!(
-            sim.units().iter().find(|u| u.id == s1).unwrap().status,
-            "in position"
-        );
+        // Arrived: the move order is done and the section is idle.
+        let u = sim.units().into_iter().find(|u| u.id == s1).unwrap();
+        assert_eq!((u.order, u.status), (None, "idle"));
         // The section commander's slot is 2 m behind the anchor.
         let sc = sim
             .soldiers()
@@ -1018,42 +1009,96 @@ mod tests {
         assert_eq!(me.position, [0.0, 0.0, 0.0]);
     }
 
+    /// Rounds fired per soldier id, from `ShotFired` events.
+    fn shots_by_soldier(events: &[SimEvent]) -> std::collections::HashMap<u32, u32> {
+        let mut out = std::collections::HashMap::new();
+        for e in events {
+            if let SimEvent::ShotFired {
+                soldier_id, rounds, ..
+            } = e
+            {
+                *out.entry(*soldier_id).or_insert(0) += rounds;
+            }
+        }
+        out
+    }
+
+    /// Set what an AI soldier has loaded and in their pouches.
+    fn set_ammo(sim: &mut Sim, soldier_id: u32, loaded: u32, spares: Vec<u32>) {
+        let e = sim.soldier_entity(soldier_id).unwrap();
+        let w = sim.world().get::<Inventory>(e).unwrap().primary.unwrap();
+        sim.world_mut().get_mut::<Inventory>(e).unwrap().magazines = spares;
+        sim.world_mut().get_mut::<WeaponState>(w).unwrap().magazine = Some(loaded);
+    }
+
     #[test]
-    fn fire_order_spends_rounds_reloads_and_reports_shots() {
+    fn fire_mission_is_one_magazine_per_soldier_then_idle() {
         let mut sim = sim_at(30.0);
         sim.spawn_platoon([0.0, 0.0, 0.0], 0.0);
         let s2 = unit_id(&mut sim, "2 Section");
+        let members: Vec<u32> = sim
+            .soldiers()
+            .into_iter()
+            .filter(|s| s.unit_id == s2)
+            .map(|s| s.id)
+            .collect();
         let before = sim.units().iter().find(|u| u.id == s2).unwrap().rounds;
         sim.order_fire_at(&[s2], [0.0, 0.0, -200.0]);
-        let events = run_seconds(&mut sim, 90.0);
-        let shots: u32 = events
-            .iter()
-            .filter_map(|e| match e {
-                SimEvent::ShotFired { rounds, .. } => Some(*rounds),
-                _ => None,
-            })
-            .sum();
-        let after = sim.units().iter().find(|u| u.id == s2).unwrap().rounds;
-        assert!(shots > 100, "only {shots} rounds fired");
-        assert_eq!(
-            before - after,
-            shots,
-            "rounds fired must come out of inventories"
-        );
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, SimEvent::Reloaded { .. })),
-            "nobody reloaded"
-        );
+
+        let events = run_seconds(&mut sim, 2.0);
         assert_eq!(
             sim.units().iter().find(|u| u.id == s2).unwrap().status,
             "firing"
         );
-        // Everyone faces the target (yaw 0 = looking down -Z).
+        let mut all = events;
+        all.extend(run_seconds(&mut sim, 120.0));
+
+        // Everyone fired exactly one magazine (30 rounds), no more.
+        let shots = shots_by_soldier(&all);
+        for id in &members {
+            assert_eq!(shots.get(id), Some(&30), "soldier {id}");
+        }
+        let after = sim.units().iter().find(|u| u.id == s2).unwrap().rounds;
+        assert_eq!(before - after, 30 * members.len() as u32);
+
+        // Then the unit reported and went idle.
+        assert!(
+            all.iter().any(
+                |e| matches!(e, SimEvent::FireMissionComplete { unit_id, .. } if *unit_id == s2)
+            )
+        );
+        let u = sim.units().into_iter().find(|u| u.id == s2).unwrap();
+        assert_eq!((u.order, u.status), (None, "idle"));
         for s in sim.soldiers().into_iter().filter(|s| s.unit_id == s2) {
+            assert_eq!(
+                (s.activity, s.fire_target),
+                (Activity::Idle, None),
+                "{}",
+                s.name
+            );
+            // Everyone faced the target (yaw 0 = looking down -Z).
             assert!(s.yaw.abs() < 0.4, "{} faces {}", s.name, s.yaw);
         }
+    }
+
+    #[test]
+    fn partly_used_magazine_is_swapped_to_finish_the_mission() {
+        let mut sim = sim_at(30.0);
+        sim.spawn_platoon([0.0, 0.0, 0.0], 0.0);
+        let s1 = unit_id(&mut sim, "1 Section");
+        let rifleman = sim
+            .soldiers()
+            .into_iter()
+            .find(|s| s.unit_id == s1 && s.role == Role::Rifleman)
+            .unwrap()
+            .id;
+        set_ammo(&mut sim, rifleman, 10, vec![30, 30]);
+        sim.order_fire_at(&[s1], [0.0, 0.0, -150.0]);
+        let events = run_seconds(&mut sim, 120.0);
+        assert_eq!(shots_by_soldier(&events).get(&rifleman), Some(&30));
+        assert!(events.iter().any(
+            |e| matches!(e, SimEvent::Reloaded { soldier_id, .. } if *soldier_id == rifleman)
+        ));
     }
 
     #[test]
@@ -1061,15 +1106,30 @@ mod tests {
         let mut sim = sim_at(30.0);
         sim.spawn_platoon([0.0, 0.0, 0.0], 0.0);
         let s3 = unit_id(&mut sim, "3 Section");
+        let ids: Vec<u32> = sim
+            .soldiers()
+            .into_iter()
+            .filter(|s| s.unit_id == s3)
+            .map(|s| s.id)
+            .collect();
+        for id in &ids {
+            set_ammo(&mut sim, *id, 5, vec![]);
+        }
         sim.order_fire_at(&[s3], [0.0, 0.0, -100.0]);
-        let events = run_seconds(&mut sim, 900.0);
+        let events = run_seconds(&mut sim, 60.0);
         assert!(
             events
                 .iter()
                 .any(|e| matches!(e, SimEvent::OutOfAmmo { .. }))
         );
+        // Running dry also ends the mission.
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SimEvent::FireMissionComplete { .. }))
+        );
         let u = sim.units().into_iter().find(|u| u.id == s3).unwrap();
-        assert_eq!((u.rounds, u.status), (0, "out of ammo"));
+        assert_eq!((u.rounds, u.status), (0, "idle"));
     }
 
     #[test]
@@ -1089,7 +1149,7 @@ mod tests {
         assert_eq!(late_shots, 0);
         assert_eq!(
             sim.units().iter().find(|u| u.id == s1).unwrap().status,
-            "in position"
+            "idle"
         );
     }
 

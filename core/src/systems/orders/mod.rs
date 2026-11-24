@@ -3,8 +3,10 @@
 //! same state. Units acknowledge orders and report back through `SimEvent`s.
 //!
 //! - `apply`   : take queued orders, hand each to its order type, acknowledge
-//! - `move_to` : `Order::MoveTo` - formation goals, walking, "in position"
-//! - `fire_at` : `Order::FireAt` - fire missions, shooting, magazine changes
+//! - `move_to` : `Order::MoveTo` - formation goals, walking, "in position";
+//!   the order ends when everyone has arrived
+//! - `fire_at` : `Order::FireAt` - fire missions, shooting, magazine changes;
+//!   each soldier fires one magazine's worth, then the order ends
 //! - `queries` : named queries shared by the order systems
 //!
 //! To add an order type: add a variant to `Order`, a file here with an
@@ -18,7 +20,7 @@ mod move_to;
 mod queries;
 
 pub use apply::{PendingOrders, apply_orders};
-pub use fire_at::fire_control;
+pub use fire_at::{fire_control, report_fire_complete};
 pub use move_to::{move_soldiers, report_in_position};
 
 /// Tuning values for orders. They'll move into data files later.

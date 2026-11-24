@@ -37,4 +37,8 @@ pub struct FireControl {
     /// Seconds left in a magazine change (0 = not reloading).
     pub reload_left: f32,
     pub out_of_ammo: bool,
+    /// Rounds still to fire in this fire mission (one magazine's worth when
+    /// the order is given). The soldier stops firing at 0.
+    #[serde(default)]
+    pub rounds_left: u32,
 }

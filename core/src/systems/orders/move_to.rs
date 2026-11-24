@@ -117,14 +117,15 @@ pub fn move_soldiers(
     }
 }
 
-/// Tell the client once when every soldier of a moving unit has arrived.
+/// When every soldier of a moving unit has arrived, report "in position" and
+/// clear the order: the unit is idle again.
 pub fn report_in_position(
     mut events: ResMut<SimEvents>,
     mut units: Query<OrderedUnit>,
     goals: Query<&MoveGoal, Without<PlayerControlled>>,
 ) {
     for mut u in &mut units {
-        if u.current.arrived_reported || !matches!(u.current.order, Some(Order::MoveTo { .. })) {
+        if !matches!(u.current.order, Some(Order::MoveTo { .. })) {
             continue;
         }
         let still_moving = u
@@ -134,6 +135,7 @@ pub fn report_in_position(
             .any(|m| goals.get(*m).is_ok_and(|g| g.0.is_some()));
         if !still_moving {
             u.current.arrived_reported = true;
+            u.current.order = None;
             events.push(SimEvent::UnitInPosition {
                 unit_id: u.unit.id,
                 callsign: u.unit.callsign.clone(),

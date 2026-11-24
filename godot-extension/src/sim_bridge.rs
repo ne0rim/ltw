@@ -377,6 +377,13 @@ impl SimBridge {
                         "callsign" => &callsign.to_variant(),
                     },
                 ),
+                SimEvent::FireMissionComplete { unit_id, callsign } => (
+                    "fire_mission_complete",
+                    vdict! {
+                        "unit_id" => &(unit_id as i64).to_variant(),
+                        "callsign" => &callsign.to_variant(),
+                    },
+                ),
                 SimEvent::ShotFired {
                     soldier_id,
                     target,
