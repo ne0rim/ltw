@@ -1,0 +1,7 @@
+{
+  "m16a2": {
+    "name": "M16A2",
+    "caliber": "5.56x45mm",
+    "magazine_capacity": 30
+  }
+}

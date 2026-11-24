@@ -6,6 +6,7 @@
 //! client renders.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::query::{Has, Without};
@@ -22,6 +23,7 @@ use crate::components::{
 use crate::entities::{platoon, player};
 use crate::events::{SimEvent, SimEvents};
 use crate::rng::SimRng;
+use crate::save::{self, SaveError, SaveGame};
 use crate::systems::{self, orders::PendingOrders};
 
 /// Default values for the ticker. Change these to change the starting
@@ -93,12 +95,50 @@ impl Default for Sim {
 
 impl Sim {
     pub fn new(config: SimConfig) -> Self {
+        let (world, player) = Self::base_world();
+        Self::with_world(config, world, player)
+    }
+
+    /// Rebuild a sim from a save file's contents.
+    pub fn from_save(config: SimConfig, save: &SaveGame) -> Self {
+        let (mut world, player) = Self::base_world();
+        save::restore(&mut world, player, save);
+        Self::with_world(config, world, player)
+    }
+
+    /// Snapshot everything needed to rebuild this sim (see [`save`]).
+    pub fn to_save(&mut self) -> SaveGame {
+        // A player report not yet applied would be lost; apply it to the snapshot.
+        if let Some(r) = self.pending_player {
+            self.world
+                .entity_mut(self.player)
+                .insert((r.transform, r.velocity, r.stance, r.gait));
+        }
+        save::capture(&mut self.world, self.player)
+    }
+
+    /// Save to a file (written safely: temp file, then rename).
+    pub fn save_to_file(&mut self, path: &Path) -> Result<(), SaveError> {
+        save::write_file(path, &self.to_save())
+    }
+
+    /// Load from a file. `Ok(None)` if there is no save yet.
+    pub fn load_from_file(config: SimConfig, path: &Path) -> Result<Option<Self>, SaveError> {
+        Ok(save::read_file(path)?.map(|s| Self::from_save(config, &s)))
+    }
+
+    /// A world with the sim's resources and a bare player entity.
+    fn base_world() -> (World, Entity) {
         let mut world = World::new();
         world.insert_resource(SimClock::default());
         world.init_resource::<SimEvents>();
         world.init_resource::<SimRng>();
         world.init_resource::<PendingOrders>();
         let player = player::spawn_player(&mut world);
+        (world, player)
+    }
+
+    fn with_world(config: SimConfig, world: World, player: Entity) -> Self {
         let mut schedule = Schedule::default();
         schedule.add_systems(
             (

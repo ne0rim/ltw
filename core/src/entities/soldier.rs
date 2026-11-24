@@ -5,8 +5,8 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 
 use crate::components::{
-    Activity, FireControl, FormationSlot, Gait, Health, Inventory, LifeState, M16A2, MoveGoal,
-    Role, Soldier, SquadMember, Stance, Transform, Velocity, WeaponSpec,
+    Activity, FireControl, FormationSlot, Gait, Health, Inventory, LifeState, MoveGoal, Role,
+    Soldier, SquadMember, Stance, Transform, Velocity, WeaponSpec, weapon_spec,
 };
 
 use super::weapon::spawn_weapon;
@@ -50,6 +50,9 @@ impl SoldierBundle {
     }
 }
 
+/// Weapon id (in `weapons.json`) everyone is issued for now.
+const DEFAULT_RIFLE: &str = "m16a2";
+
 /// What a soldier is issued when spawned.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Loadout {
@@ -67,7 +70,7 @@ impl Loadout {
     /// medical assistants carry extra dressings.
     pub fn basic(role: Role) -> Self {
         Self {
-            weapon: M16A2,
+            weapon: weapon_spec(DEFAULT_RIFLE).expect("default rifle missing from weapons.json"),
             spare_magazines: 6,
             frag_grenades: 2,
             smoke_grenades: if matches!(role, Role::SectionCommander | Role::PlatoonWarrant) {

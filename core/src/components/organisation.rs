@@ -6,7 +6,7 @@
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::Entity;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum UnitKind {
     Platoon,
     PlatoonHeadquarters,
@@ -42,7 +42,7 @@ pub struct Leader(pub Option<Entity>);
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct ParentUnit(pub Entity);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum FireTeam {
     Alpha,
     Bravo,

@@ -2,7 +2,7 @@
 
 use bevy_ecs::component::Component;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Order {
     /// Walk to `target` and form up facing `facing` (yaw, radians).
     MoveTo { target: [f32; 3], facing: f32 },

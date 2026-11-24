@@ -4,7 +4,7 @@
 use bevy_ecs::component::Component;
 
 /// World-space position (metres) and facing (yaw, radians around +Y).
-#[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Transform {
     pub position: [f32; 3],
     pub yaw: f32,

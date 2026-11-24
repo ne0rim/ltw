@@ -89,74 +89,6 @@ const PLATOON_HQ: [Slot; 6] = [
 /// Where each section sits relative to the platoon commander: (right, forward) metres.
 const SECTION_ANCHORS: [(f32, f32); 3] = [(-35.0, 25.0), (0.0, 30.0), (35.0, 25.0)];
 
-/// English and French Canadian surnames.
-const SURNAMES: [&str; 64] = [
-    "Tremblay",
-    "MacDonald",
-    "Gagnon",
-    "Campbell",
-    "Roy",
-    "Fraser",
-    "Cote",
-    "Stewart",
-    "Bouchard",
-    "MacLeod",
-    "Gauthier",
-    "Wilson",
-    "Morin",
-    "Murray",
-    "Lavoie",
-    "Robertson",
-    "Fortin",
-    "Thompson",
-    "Gagne",
-    "Mackenzie",
-    "Ouellet",
-    "Anderson",
-    "Pelletier",
-    "Taylor",
-    "Belanger",
-    "Martin",
-    "Levesque",
-    "Smith",
-    "Bergeron",
-    "Brown",
-    "Leblanc",
-    "Johnston",
-    "Paquette",
-    "Graham",
-    "Girard",
-    "Ross",
-    "Simard",
-    "Morrison",
-    "Boucher",
-    "Reid",
-    "Caron",
-    "Kennedy",
-    "Beaulieu",
-    "Hamilton",
-    "Cloutier",
-    "Scott",
-    "Dube",
-    "Grant",
-    "Poirier",
-    "Ferguson",
-    "Fournier",
-    "Bell",
-    "Lapointe",
-    "Clarke",
-    "Leclerc",
-    "Doucet",
-    "Hebert",
-    "Sinclair",
-    "Lefebvre",
-    "Cameron",
-    "Gaudreault",
-    "Mercier",
-    "MacKay",
-    "Theriault",
-];
-
 /// Spawn a platoon around `leader` (the player's entity), which becomes the
 /// platoon commander. Returns the platoon entity.
 pub fn spawn_platoon(world: &mut World, leader: Entity, origin: [f32; 3], yaw: f32) -> Entity {
@@ -282,7 +214,7 @@ fn next(counter: &mut u32) -> u32 {
 }
 
 fn shuffled_names(world: &mut World) -> Vec<&'static str> {
-    let mut names: Vec<&'static str> = SURNAMES.to_vec();
+    let mut names: Vec<&'static str> = crate::data::SURNAMES.clone();
     let mut rng = world.get_resource_or_insert_with(SimRng::default);
     for i in (1..names.len()).rev() {
         let j = rng.below(i as u32 + 1) as usize;

@@ -12,7 +12,7 @@ pub struct Soldier {
 }
 
 /// Canadian Forces army ranks (1985).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Rank {
     Private,
     Corporal,
@@ -52,7 +52,7 @@ impl Rank {
 }
 
 /// Canadian infantry platoon appointments (1985).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Role {
     PlatoonCommander,
     PlatoonWarrant,

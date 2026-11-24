@@ -4,25 +4,19 @@
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::Entity;
 
-/// Static facts about a weapon type. Later this comes from data files.
+/// Static facts about a weapon type, loaded from `core/data/weapons.json`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WeaponSpec {
     pub id: &'static str,
+    /// Display name, e.g. "M16A2".
+    pub name: &'static str,
     pub caliber: &'static str,
     pub magazine_capacity: u32,
 }
 
-pub const M16A2: WeaponSpec = WeaponSpec {
-    id: "m16a2",
-    caliber: "5.56x45mm",
-    magazine_capacity: 30,
-};
-
+/// Look up a weapon type by id (a key in `weapons.json`).
 pub fn weapon_spec(id: &str) -> Option<WeaponSpec> {
-    match id {
-        "m16a2" => Some(M16A2),
-        _ => None,
-    }
+    crate::data::WEAPONS.get(id).copied()
 }
 
 /// A weapon entity. Weapons are their own entities so they can be dropped,

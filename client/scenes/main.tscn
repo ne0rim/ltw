@@ -3,9 +3,9 @@
 [ext_resource type="Script" uid="uid://b0jq3mws8yksp" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" uid="uid://u67papb74exa" path="res://scripts/terrain.gd" id="2_terrain"]
 [ext_resource type="PackedScene" path="res://scenes/player/player.tscn" id="3_player"]
-[ext_resource type="PackedScene" path="res://scenes/ui/crosshair.tscn" id="4_crosshair"]
-[ext_resource type="Script" path="res://scripts/platoon_view.gd" id="5_platoon"]
-[ext_resource type="Script" path="res://scripts/command_input.gd" id="6_command"]
+[ext_resource type="PackedScene" path="res://scenes/ui/hud.tscn" id="4_hud"]
+[ext_resource type="Script" uid="uid://jkekbtlu1yix" path="res://scripts/platoon_view.gd" id="5_platoon"]
+[ext_resource type="Script" uid="uid://d18rcc0cqd6eo" path="res://scripts/command_input.gd" id="6_command"]
 
 [sub_resource type="ProceduralSkyMaterial" id="Sky_mat"]
 sky_top_color = Color(0.45, 0.45, 0.45, 1)
@@ -46,22 +46,19 @@ script = ExtResource("2_terrain")
 
 [node name="Player" parent="." unique_id=1749561026 instance=ExtResource("3_player")]
 
-[node name="Platoon" type="Node3D" parent="." node_paths=PackedStringArray("commander")]
+[node name="Platoon" type="Node3D" parent="." unique_id=1647293171 node_paths=PackedStringArray("commander")]
 script = ExtResource("5_platoon")
 commander = NodePath("../Player")
 
-[node name="Command" type="Node3D" parent="." node_paths=PackedStringArray("sim", "platoon", "player")]
+[node name="Command" type="Node3D" parent="." unique_id=911822146 node_paths=PackedStringArray("sim", "platoon", "player")]
 script = ExtResource("6_command")
 sim = NodePath("../SimBridge")
 platoon = NodePath("../Platoon")
 player = NodePath("../Player")
 
-[node name="DebugHUD" type="CanvasLayer" parent="." unique_id=1457497997]
-
-[node name="Label" type="Label" parent="DebugHUD" unique_id=1790762972]
-offset_left = 12.0
-offset_top = 8.0
-theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
-theme_override_constants/outline_size = 4
-
-[node name="Crosshair" parent="DebugHUD" unique_id=650204389 instance=ExtResource("4_crosshair")]
+[node name="HUD" parent="." unique_id=1289853959 node_paths=PackedStringArray("sim", "player", "platoon", "command", "view") instance=ExtResource("4_hud")]
+sim = NodePath("../SimBridge")
+player = NodePath("../Player")
+platoon = NodePath("../Platoon")
+command = NodePath("../Command")
+view = NodePath("../Player/Head/Camera/ViewModel")

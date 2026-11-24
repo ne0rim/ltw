@@ -3,11 +3,13 @@
 //! Every ticker setting is an exported property. You can change it in the
 //! Inspector, including while the game runs (Remote scene tree).
 
+use std::path::Path;
+
 use godot::builtin::{
     GString, PackedFloat32Array, PackedInt32Array, VarArray, VarDictionary, Vector3, vdict,
 };
 use godot::classes::{INode, Node};
-use godot::global::godot_error;
+use godot::global::{godot_error, godot_print};
 use godot::meta::ToGodot;
 use godot::obj::{Base, WithUserSignals};
 use godot::register::{GodotClass, godot_api};
@@ -127,6 +129,46 @@ impl SimBridge {
             "stance_name" => &s.stance.name().to_variant(),
             "gait" => &(s.gait as i64).to_variant(),
             "gait_name" => &s.gait.name().to_variant(),
+        }
+    }
+
+    // ------------------------------------------------------------ save files
+
+    /// Replace the sim with the save at `path` (an absolute OS path; use
+    /// `ProjectSettings.globalize_path("user://...")`). Returns true if a save
+    /// was loaded; false if there is none or it couldn't be read (the error is
+    /// logged and the current sim is kept).
+    #[func]
+    fn load_game(&mut self, path: GString) -> bool {
+        self.sync_config();
+        let path = path.to_string();
+        match Sim::load_from_file(self.sim.config, Path::new(&path)) {
+            Ok(Some(sim)) => {
+                self.sim = sim;
+                godot_print!("[save] loaded {path}");
+                true
+            }
+            Ok(None) => false,
+            Err(e) => {
+                godot_error!("[save] could not load {path}: {e}");
+                false
+            }
+        }
+    }
+
+    /// Write the sim to `path` (an absolute OS path). Returns true on success.
+    #[func]
+    fn save_game(&mut self, path: GString) -> bool {
+        let path = path.to_string();
+        match self.sim.save_to_file(Path::new(&path)) {
+            Ok(()) => {
+                godot_print!("[save] saved {path}");
+                true
+            }
+            Err(e) => {
+                godot_error!("[save] could not save {path}: {e}");
+                false
+            }
         }
     }
 

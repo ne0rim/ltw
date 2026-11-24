@@ -2,7 +2,7 @@
 
 use bevy_ecs::component::Component;
 
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Health {
     pub current: f32,
     pub max: f32,
@@ -17,7 +17,7 @@ impl Default for Health {
     }
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum LifeState {
     #[default]
     Healthy,

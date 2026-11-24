@@ -25,4 +25,4 @@ pub use organisation::{
 };
 pub use player::{PlayerControlled, PlayerReport};
 pub use transform::{Transform, Velocity, place, yaw_towards};
-pub use weapon::{Holder, M16A2, WeaponSpec, WeaponState, weapon_spec};
+pub use weapon::{Holder, WeaponSpec, WeaponState, weapon_spec};

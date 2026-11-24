@@ -26,12 +26,17 @@ var _selected := PackedInt32Array()
 
 ## Spawn the platoon in the sim and build visuals for everyone but the player.
 func spawn_platoon(sim: SimBridge, terrain: Terrain, origin: Vector3, yaw: float) -> void:
+	sim.spawn_platoon(origin, yaw)
+	attach(sim, terrain)
+
+
+## Build visuals for the platoon the sim already has (e.g. after loading a save).
+func attach(sim: SimBridge, terrain: Terrain) -> void:
 	_sim = sim
 	_terrain = terrain
 	_effects = ShotEffects.new()
 	_effects.name = "ShotEffects"
 	add_child(_effects)
-	_sim.spawn_platoon(origin, yaw)
 	units = _sim.get_units()
 	var shade_for := _unit_shades()
 	refresh()
@@ -97,14 +102,15 @@ func summary() -> String:
 	return "%d soldiers · %s" % [total, " · ".join(parts)]
 
 
-## One line per unit: "[11A] 1 Sect: moving · 2,070 rds".
+## One line per unit: "[11A] 1 Sect · 10 men · moving · 2070 rds" (▶ = selected).
 func unit_status_lines() -> PackedStringArray:
 	var out := PackedStringArray()
 	for u in units:
 		if u.kind == "platoon":
 			continue
 		var mark := "▶" if _selected.has(u.id) else " "
-		out.append("%s[%s] %s: %s · %d rds" % [mark, u.callsign, _short_name(u), u.status, u.rounds])
+		out.append("%s[%s] %s · %d men · %s · %d rds" % [
+			mark, u.callsign, _short_name(u), u.soldier_ids.size(), u.status, u.rounds])
 	return out
 
 
