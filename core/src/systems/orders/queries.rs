@@ -7,7 +7,7 @@ use bevy_ecs::query::{QueryData, Without};
 use bevy_ecs::system::Query;
 
 use crate::components::{
-    Activity, CurrentOrder, FireControl, FormationSlot, Inventory, Members, MoveGoal,
+    Activity, Controller, CurrentOrder, FireControl, FormationSlot, Inventory, Members, MoveGoal,
     PlayerControlled, Transform, Unit,
 };
 
@@ -19,6 +19,7 @@ pub struct OrderedUnit {
     pub unit: &'static Unit,
     pub members: &'static Members,
     pub current: &'static mut CurrentOrder,
+    pub controller: &'static Controller,
 }
 
 /// What an order changes on a soldier.

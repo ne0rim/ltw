@@ -28,7 +28,7 @@ var _markers: Array = []    # [node, time_left]
 func unit_for_key(n: int) -> int:
 	var sections := []
 	var hq := -1
-	for u in platoon.units:
+	for u in platoon.my_units():
 		if u.kind == "rifle_section":
 			sections.append(u.id)
 		elif u.kind == "platoon_hq":

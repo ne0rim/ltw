@@ -14,6 +14,7 @@ use godot::meta::ToGodot;
 use godot::obj::{Base, WithUserSignals};
 use godot::register::{GodotClass, godot_api};
 
+use ltw_core::components::{Side, TaskKind};
 use ltw_core::sim::{Sim, SimConfig, defaults};
 use ltw_core::{Gait, PlayerReport, SimEvent, Stance, Transform, Velocity};
 
@@ -182,6 +183,60 @@ impl SimBridge {
         self.sim.spawn_platoon([origin.x, origin.y, origin.z], yaw) as i64
     }
 
+    /// Create an AI-commanded platoon of the same build for `side` ("blue" or
+    /// "red"), facing `yaw`. It waits until given a task. Returns its unit id,
+    /// or -1 for an unknown side.
+    #[func]
+    fn spawn_ai_platoon(
+        &mut self,
+        side: GString,
+        name: GString,
+        callsign: GString,
+        origin: Vector3,
+        yaw: f32,
+    ) -> i64 {
+        let Some(side) = Side::from_name(&side.to_string()) else {
+            godot_error!("spawn_ai_platoon: unknown side {side}");
+            return -1;
+        };
+        self.sim.spawn_ai_platoon(
+            side,
+            &name.to_string(),
+            &callsign.to_string(),
+            [origin.x, origin.y, origin.z],
+            yaw,
+        ) as i64
+    }
+
+    /// Task a unit to attack (take) `objective`. An AI unit plans it itself.
+    #[func]
+    fn assign_attack(&mut self, unit_id: i64, objective: Vector3) -> bool {
+        self.sim.assign_task(
+            unit_id as u32,
+            TaskKind::Attack {
+                objective: [objective.x, objective.y, objective.z],
+            },
+        )
+    }
+
+    /// Task a unit to defend `position`, facing `facing` (yaw).
+    #[func]
+    fn assign_defend(&mut self, unit_id: i64, position: Vector3, facing: f32) -> bool {
+        self.sim.assign_task(
+            unit_id as u32,
+            TaskKind::Defend {
+                position: [position.x, position.y, position.z],
+                facing,
+            },
+        )
+    }
+
+    /// "blue" or "red": the side the player fights for.
+    #[func]
+    fn get_player_side(&self) -> GString {
+        GString::from(self.sim.player_side().name())
+    }
+
     /// Every soldier as a Dictionary (id, name, rank, role, unit, position,
     /// health, life, weapon, rounds, magazines, ...), sorted by id.
     #[func]
@@ -192,6 +247,7 @@ impl SimBridge {
             let mags: PackedInt32Array = s.magazines.iter().map(|m| *m as i32).collect();
             let d = vdict! {
                 "id" => &(s.id as i64).to_variant(),
+                "side" => &s.side.name().to_variant(),
                 "name" => &s.name.to_variant(),
                 "rank" => &s.rank.abbrev().to_variant(),
                 "role" => &s.role.name().to_variant(),
@@ -246,6 +302,12 @@ impl SimBridge {
                 "order_target" => &v3(u.order.map_or([0.0; 3], |o| o.target())).to_variant(),
                 "status" => &u.status.to_variant(),
                 "rounds" => &(u.rounds as i64).to_variant(),
+                "side" => &u.side.name().to_variant(),
+                "controller" => &u.controller.name().to_variant(),
+                "task" => &u.task.map_or("none", |t| t.name()).to_variant(),
+                "task_point" => &v3(u.task.map_or([0.0; 3], |t| t.point())).to_variant(),
+                "task_stage" => &u.task_stage.map_or("", |t| t.name()).to_variant(),
+                "playbook" => &u.playbook.map_or("", |p| p.name()).to_variant(),
             };
             out.push(&d.to_variant());
         }
@@ -329,11 +391,52 @@ impl SimBridge {
                         "speed" => &speed.to_variant(),
                     },
                 ),
-                SimEvent::PlatoonSpawned { unit_id, soldiers } => (
+                SimEvent::PlatoonSpawned {
+                    unit_id,
+                    soldiers,
+                    side,
+                } => (
                     "platoon_spawned",
                     vdict! {
                         "unit_id" => &(unit_id as i64).to_variant(),
                         "soldiers" => &(soldiers as i64).to_variant(),
+                        "side" => &side.name().to_variant(),
+                    },
+                ),
+                SimEvent::TaskAssigned {
+                    unit_id,
+                    callsign,
+                    task,
+                } => (
+                    "task_assigned",
+                    vdict! {
+                        "unit_id" => &(unit_id as i64).to_variant(),
+                        "callsign" => &callsign.to_variant(),
+                        "task" => &task.to_variant(),
+                    },
+                ),
+                SimEvent::TaskComplete {
+                    unit_id,
+                    callsign,
+                    task,
+                } => (
+                    "task_complete",
+                    vdict! {
+                        "unit_id" => &(unit_id as i64).to_variant(),
+                        "callsign" => &callsign.to_variant(),
+                        "task" => &task.to_variant(),
+                    },
+                ),
+                SimEvent::PlanMade {
+                    unit_id,
+                    callsign,
+                    playbook,
+                } => (
+                    "plan_made",
+                    vdict! {
+                        "unit_id" => &(unit_id as i64).to_variant(),
+                        "callsign" => &callsign.to_variant(),
+                        "playbook" => &playbook.to_variant(),
                     },
                 ),
                 SimEvent::Reloaded {

@@ -4,16 +4,24 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Query, ResMut};
 
-use crate::components::{Order, UnitKind, WeaponState};
+use crate::components::{Issuer, Order, UnitKind, WeaponState};
 use crate::events::{SimEvent, SimEvents};
 use crate::rng::SimRng;
 
 use super::queries::{AiSoldiers, OrderedUnit};
 use super::{fire_at, move_to};
 
-/// Orders from the client waiting for the next tick: (unit ids, order).
+/// An order for some units, and who gave it.
+#[derive(Debug, Clone)]
+pub struct OrderRequest {
+    pub units: Vec<u32>,
+    pub order: Order,
+    pub issuer: Issuer,
+}
+
+/// Orders waiting to be applied (from the client, the AI or a script).
 #[derive(Resource, Debug, Default)]
-pub struct PendingOrders(pub Vec<(Vec<u32>, Order)>);
+pub struct PendingOrders(pub Vec<OrderRequest>);
 
 /// A unit that has been given an order.
 pub struct Recipient {
@@ -33,11 +41,22 @@ pub fn apply_orders(
     mut soldiers: AiSoldiers,
     weapons: Query<&WeaponState>,
 ) {
-    for (unit_ids, order) in std::mem::take(&mut pending.0) {
-        // The platoon itself can't be ordered, only its sections and HQ.
+    for OrderRequest {
+        units: unit_ids,
+        order,
+        issuer,
+    } in std::mem::take(&mut pending.0)
+    {
+        // Orders go to sections and HQs (not the platoon itself), and only
+        // from whoever controls the unit: the player can't command the enemy,
+        // and the AI can't command the player's units.
         let recipients: Vec<Recipient> = units
             .iter()
-            .filter(|u| unit_ids.contains(&u.unit.id) && u.unit.kind != UnitKind::Platoon)
+            .filter(|u| {
+                unit_ids.contains(&u.unit.id)
+                    && u.unit.kind != UnitKind::Platoon
+                    && issuer.may_command(*u.controller)
+            })
             .map(|u| Recipient {
                 entity: u.entity,
                 id: u.unit.id,

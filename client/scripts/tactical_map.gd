@@ -4,6 +4,9 @@ extends Control
 ## every soldier in the platoon, unit orders, and a panel of unit stats.
 ## North (-Z) is up. Open and close it with `toggle()` (the HUD binds T).
 ##
+## Enemy soldiers are shown in red. (Until sight exists the map shows all of
+## them; later it will only show what your side has spotted.)
+##
 ## Mouse: left-click a soldier to select their unit (Shift+click adds or
 ## removes), left-click empty ground to clear the selection, right-click to
 ## move the selected units there. They form up facing the way they travel.
@@ -11,8 +14,10 @@ extends Control
 ## The "area" is the whole test terrain for now. Later it becomes one part of
 ## a larger map, and the map gains terrain types and objects.
 
-## Colour per unit: platoon HQ, then 1, 2, 3 Section.
-const UNIT_COLORS := [Color("e8e8e8"), Color("e0b84c"), Color("5fb3c9"), Color("d9776b")]
+## Colour per unit on your side: platoon HQ, then 1, 2, 3 Section.
+const UNIT_COLORS := [Color("e8e8e8"), Color("e0b84c"), Color("5fb3c9"), Color("8fc98a")]
+## Every enemy unit is red (HQ a little darker).
+const ENEMY_COLOR := Color("e2574c")
 const DEAD_COLOR := Color(0.45, 0.45, 0.45)
 
 @export var area_name: String = "Test area"
@@ -113,7 +118,7 @@ func _unit_at(at: Vector2) -> int:
 	var best := -1
 	var best_d := pick_radius_px
 	for s in _platoon.soldiers:
-		if s.life == "dead":
+		if s.life == "dead" or s.side != _platoon.my_side:
 			continue
 		var p := _to_map(_player.global_position if s.is_player else s.position)
 		var d := p.distance_to(at)
@@ -209,8 +214,8 @@ func _draw_markers() -> void:
 		by_id[s.id] = s
 
 	# Orders: a line from each unit to its objective.
-	for u in _platoon.units:
-		if u.kind == "platoon" or u.order == "none":
+	for u in _platoon.my_units():
+		if u.order == "none":
 			continue
 		var c: Color = colors.get(u.id, Color.WHITE)
 		var from := _unit_centre(u, by_id)
@@ -297,7 +302,9 @@ func _unit_colors() -> Dictionary:
 	var out := {}
 	var section_no := 0
 	for u in _platoon.units:
-		if u.kind == "platoon_hq":
+		if u.side != _platoon.my_side:
+			out[u.id] = ENEMY_COLOR.darkened(0.25) if u.kind == "platoon_hq" else ENEMY_COLOR
+		elif u.kind == "platoon_hq":
 			out[u.id] = UNIT_COLORS[0]
 		elif u.kind == "rifle_section":
 			section_no += 1
@@ -315,13 +322,13 @@ func _squad_lines() -> PackedStringArray:
 	var total := 0
 	var effective := 0
 	for s in _platoon.soldiers:
+		if s.side != _platoon.my_side:
+			continue
 		total += 1
 		if s.life in ["healthy", "wounded"]:
 			effective += 1
 	lines.append("1 Platoon · %d/%d effective" % [effective, total])
-	for u in _platoon.units:
-		if u.kind == "platoon":
-			continue
+	for u in _platoon.my_units():
 		var fit := 0
 		var wounded := 0
 		var down := 0

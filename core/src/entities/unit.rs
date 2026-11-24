@@ -2,9 +2,10 @@
 
 use bevy_ecs::bundle::Bundle;
 
-use crate::components::{CurrentOrder, Leader, Members, Unit, UnitKind};
+use crate::components::{Controller, CurrentOrder, Leader, Members, Side, Task, Unit, UnitKind};
 
-/// A unit with no members, no leader and no orders yet. Sections also get a
+/// A unit with no members, no leader, no orders and no task yet. Set `side`
+/// and `controller` before spawning (they default to Blue / Player). Sections also get a
 /// `ParentUnit` pointing at their platoon.
 #[derive(Bundle)]
 pub struct UnitBundle {
@@ -12,6 +13,9 @@ pub struct UnitBundle {
     pub members: Members,
     pub leader: Leader,
     pub order: CurrentOrder,
+    pub side: Side,
+    pub controller: Controller,
+    pub task: Task,
 }
 
 impl UnitBundle {
@@ -26,6 +30,9 @@ impl UnitBundle {
             members: Members::default(),
             leader: Leader(None),
             order: CurrentOrder::default(),
+            side: Side::default(),
+            controller: Controller::default(),
+            task: Task::default(),
         }
     }
 }

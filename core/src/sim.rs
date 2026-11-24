@@ -15,17 +15,21 @@ use bevy_ecs::schedule::{IntoScheduleConfigs, Schedule};
 use bevy_ecs::world::World;
 
 use crate::components::{
-    Activity, CommissionedOfficer, CurrentOrder, FireControl, FireTeam, Gait, Health, Inventory,
-    Leader, LifeState, Members, MoveGoal, Order, ParentUnit, PlayerControlled, PlayerReport, Rank,
-    Role, Soldier, SquadMember, Stance, Transform, Unit, UnitKind, Velocity, WeaponState,
-    swap_magazine,
+    Activity, CommissionedOfficer, Controller, CurrentOrder, FireControl, FireTeam, Gait, Health,
+    Inventory, Issuer, Leader, LifeState, Members, MoveGoal, Order, ParentUnit, Plan, PlanPhase,
+    Playbook, PlayerControlled, PlayerReport, Rank, Role, Side, Soldier, SquadMember, Stance, Task,
+    TaskKind, TaskStage, Transform, Unit, UnitKind, Velocity, WeaponState, swap_magazine,
 };
+use crate::entities::platoon::PlatoonSpec;
 use crate::entities::soldier::Loadout;
 use crate::entities::{platoon, player};
 use crate::events::{SimEvent, SimEvents};
 use crate::rng::SimRng;
 use crate::save::{self, SaveError, SaveGame};
-use crate::systems::{self, orders::PendingOrders};
+use crate::systems::{
+    self,
+    orders::{OrderRequest, PendingOrders},
+};
 
 /// Default values for the ticker. Change these to change the starting
 /// behaviour everywhere. At runtime, edit [`SimConfig`] instead.
@@ -143,6 +147,8 @@ impl Sim {
         let mut schedule = Schedule::default();
         schedule.add_systems(
             (
+                systems::command::command_platoons,
+                systems::command::command_sections,
                 systems::orders::apply_orders,
                 systems::orders::move_soldiers,
                 systems::orders::fire_control,
@@ -229,10 +235,42 @@ impl Sim {
 
     // ---------------------------------------------------------------- units & soldiers
 
-    /// Create a platoon (platoon HQ of 6 + 3 rifle sections of 10)
-    /// around the player, who becomes its platoon commander. Returns the platoon's unit id.
+    /// Create the player's platoon (platoon HQ of 6 + 3 rifle sections of 10)
+    /// around the player, who becomes its platoon commander. Blue side, player
+    /// controlled. Returns the platoon's unit id.
     pub fn spawn_platoon(&mut self, origin: [f32; 3], yaw: f32) -> u32 {
-        let platoon = platoon::spawn_platoon(&mut self.world, self.player, origin, yaw);
+        let spec = PlatoonSpec {
+            side: Side::Blue,
+            controller: Controller::Player,
+            name: "1 Platoon",
+            callsign: "11",
+            commander: Some(self.player),
+        };
+        self.spawn_platoon_with(spec, origin, yaw)
+    }
+
+    /// Create an AI-commanded platoon of the same build for `side`. It does
+    /// nothing until given a task (see [`Sim::assign_task`]). Returns its unit id.
+    pub fn spawn_ai_platoon(
+        &mut self,
+        side: Side,
+        name: &str,
+        callsign: &str,
+        origin: [f32; 3],
+        yaw: f32,
+    ) -> u32 {
+        let spec = PlatoonSpec {
+            side,
+            controller: Controller::Ai,
+            name,
+            callsign,
+            commander: None,
+        };
+        self.spawn_platoon_with(spec, origin, yaw)
+    }
+
+    fn spawn_platoon_with(&mut self, spec: PlatoonSpec, origin: [f32; 3], yaw: f32) -> u32 {
+        let platoon = platoon::spawn_platoon(&mut self.world, spec, origin, yaw);
         let unit_id = self
             .world
             .get::<Unit>(platoon)
@@ -250,8 +288,52 @@ impl Sim {
             .sum::<usize>() as u32;
         self.world
             .resource_mut::<SimEvents>()
-            .push(SimEvent::PlatoonSpawned { unit_id, soldiers });
+            .push(SimEvent::PlatoonSpawned {
+                unit_id,
+                soldiers,
+                side: spec.side,
+            });
         unit_id
+    }
+
+    /// Give a unit a task (what the script or a higher commander wants done).
+    /// Its controller decides how: the AI breaks it down by itself; for a
+    /// player-controlled unit it is the player's objective. Replaces any
+    /// current task and plan. Returns false if there is no such unit.
+    pub fn assign_task(&mut self, unit_id: u32, task: TaskKind) -> bool {
+        let Some(e) = self.unit_entity(unit_id) else {
+            return false;
+        };
+        let callsign = self
+            .world
+            .get::<Unit>(e)
+            .map_or_else(String::new, |u| u.callsign.clone());
+        let mut entity = self.world.entity_mut(e);
+        entity.insert(Task::new(task));
+        entity.remove::<Plan>();
+        self.world
+            .resource_mut::<SimEvents>()
+            .push(SimEvent::TaskAssigned {
+                unit_id,
+                callsign,
+                task: task.name(),
+            });
+        true
+    }
+
+    pub fn unit_entity(&mut self, unit_id: u32) -> Option<Entity> {
+        let mut q = self.world.query::<(Entity, &Unit)>();
+        q.iter(&self.world)
+            .find(|(_, u)| u.id == unit_id)
+            .map(|(e, _)| e)
+    }
+
+    /// The side the player fights for.
+    pub fn player_side(&self) -> Side {
+        self.world
+            .get::<Side>(self.player)
+            .copied()
+            .unwrap_or_default()
     }
 
     /// Snapshot of every soldier, sorted by id.
@@ -268,10 +350,11 @@ impl Sim {
             Has<PlayerControlled>,
             Option<&Activity>,
             Option<&FireControl>,
+            Option<&Side>,
         )>();
         let rows: Vec<_> = q
             .iter(&self.world)
-            .map(|(s, m, t, st, h, l, inv, off, pl, act, fc)| {
+            .map(|(s, m, t, st, h, l, inv, off, pl, act, fc, side)| {
                 (
                     s.clone(),
                     *m,
@@ -284,17 +367,19 @@ impl Sim {
                     pl,
                     act.copied(),
                     fc.copied(),
+                    side.copied().unwrap_or_default(),
                 )
             })
             .collect();
         let mut out: Vec<SoldierInfo> = rows
             .into_iter()
             .map(
-                |(s, m, t, stance, h, life, inv, is_officer, is_player, act, fc)| {
+                |(s, m, t, stance, h, life, inv, is_officer, is_player, act, fc, side)| {
                     let unit = self.world.get::<Unit>(m.squad);
                     let weapon = inv.primary.and_then(|w| self.world.get::<WeaponState>(w));
                     SoldierInfo {
                         id: s.id,
+                        side,
                         name: s.name,
                         rank: s.rank,
                         role: s.role,
@@ -336,16 +421,28 @@ impl Sim {
             &Leader,
             Option<&ParentUnit>,
             Option<&CurrentOrder>,
+            (
+                Option<&Side>,
+                Option<&Controller>,
+                Option<&Task>,
+                Option<&Plan>,
+            ),
         )>();
         let rows: Vec<_> = q
             .iter(&self.world)
-            .map(|(u, m, l, p, o)| {
+            .map(|(u, m, l, p, o, (side, ctrl, task, plan))| {
                 (
                     u.clone(),
                     m.0.clone(),
                     l.0,
                     p.map(|p| p.0),
                     o.copied().unwrap_or_default(),
+                    (
+                        side.copied().unwrap_or_default(),
+                        ctrl.copied().unwrap_or_default(),
+                        task.copied().unwrap_or_default(),
+                        plan.cloned(),
+                    ),
                 )
             })
             .collect();
@@ -354,19 +451,27 @@ impl Sim {
         let unit_id = |e: Entity| world.get::<Unit>(e).map(|u| u.id);
         let mut out: Vec<UnitInfo> = rows
             .into_iter()
-            .map(|(u, members, leader, parent, current)| UnitInfo {
-                id: u.id,
-                kind: u.kind,
-                name: u.name,
-                callsign: u.callsign,
-                parent_id: parent.and_then(unit_id),
-                leader_soldier_id: leader.and_then(soldier_id),
-                soldier_ids: members.iter().filter_map(|e| soldier_id(*e)).collect(),
-                child_unit_ids: members.iter().filter_map(|e| unit_id(*e)).collect(),
-                order: current.order,
-                status: unit_status(world, &members, current.order),
-                rounds: members.iter().map(|e| soldier_rounds(world, *e)).sum(),
-            })
+            .map(
+                |(u, members, leader, parent, current, (side, controller, task, plan))| UnitInfo {
+                    id: u.id,
+                    side,
+                    controller,
+                    task: task.kind(),
+                    task_stage: task.stage(),
+                    playbook: plan.as_ref().map(|p| p.playbook),
+                    plan_phase: plan.as_ref().map(|p| p.phase),
+                    kind: u.kind,
+                    name: u.name,
+                    callsign: u.callsign,
+                    parent_id: parent.and_then(unit_id),
+                    leader_soldier_id: leader.and_then(soldier_id),
+                    soldier_ids: members.iter().filter_map(|e| soldier_id(*e)).collect(),
+                    child_unit_ids: members.iter().filter_map(|e| unit_id(*e)).collect(),
+                    order: current.order,
+                    status: unit_status(world, &members, current.order),
+                    rounds: members.iter().map(|e| soldier_rounds(world, *e)).sum(),
+                },
+            )
             .collect();
         out.sort_by_key(|u| u.id);
         out
@@ -467,21 +572,30 @@ impl Sim {
         Some(best)
     }
 
-    /// Order units to move to `target`, forming up facing `facing` (yaw).
-    /// Several units keep their spacing relative to each other. Applied next tick.
+    /// The player orders units to move to `target`, forming up facing `facing`
+    /// (yaw). Several units keep their spacing relative to each other. Applied
+    /// next tick; ignored for units the player doesn't control.
     pub fn order_move(&mut self, unit_ids: &[u32], target: [f32; 3], facing: f32) {
-        self.world
-            .resource_mut::<PendingOrders>()
-            .0
-            .push((unit_ids.to_vec(), Order::MoveTo { target, facing }));
+        self.queue_order(unit_ids, Order::MoveTo { target, facing }, Issuer::Player);
     }
 
-    /// Order units to fire at `target` until given another order. Applied next tick.
+    /// The player orders units to fire one magazine each at `target`. Applied
+    /// next tick; ignored for units the player doesn't control.
     pub fn order_fire_at(&mut self, unit_ids: &[u32], target: [f32; 3]) {
+        self.queue_order(unit_ids, Order::FireAt { target }, Issuer::Player);
+    }
+
+    /// Queue an order from any source. It is checked against each unit's
+    /// controller when applied.
+    pub fn queue_order(&mut self, unit_ids: &[u32], order: Order, issuer: Issuer) {
         self.world
             .resource_mut::<PendingOrders>()
             .0
-            .push((unit_ids.to_vec(), Order::FireAt { target }));
+            .push(OrderRequest {
+                units: unit_ids.to_vec(),
+                order,
+                issuer,
+            });
     }
 
     /// Ground heights for many soldiers at once (the client knows the terrain).
@@ -534,6 +648,7 @@ impl Sim {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SoldierInfo {
     pub id: u32,
+    pub side: Side,
     pub name: String,
     pub rank: Rank,
     pub role: Role,
@@ -565,6 +680,14 @@ pub struct SoldierInfo {
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnitInfo {
     pub id: u32,
+    pub side: Side,
+    pub controller: Controller,
+    /// What the unit has been tasked to do, and how far it has got.
+    pub task: Option<TaskKind>,
+    pub task_stage: Option<TaskStage>,
+    /// How its commander is carrying the task out (AI units with sub-units).
+    pub playbook: Option<Playbook>,
+    pub plan_phase: Option<PlanPhase>,
     pub kind: UnitKind,
     pub name: String,
     pub callsign: String,
@@ -627,6 +750,9 @@ mod tests {
         Activity, Gait, Inventory, LifeState, PlayerControlled, PlayerReport, Rank, Role, Stance,
         Transform, UnitKind, Velocity, WeaponState,
     };
+    use std::f32::consts::PI;
+
+    use crate::components::{Issuer, Order, PlanPhase, Playbook, Side, TaskKind, TaskStage};
     use crate::events::SimEvent;
 
     use super::{Sim, SimConfig};
@@ -1151,6 +1277,148 @@ mod tests {
             sim.units().iter().find(|u| u.id == s1).unwrap().status,
             "idle"
         );
+    }
+
+    /// A Red AI platoon 300 m north of the origin, tasked to attack it.
+    fn enemy_attacking(seed: u64) -> (Sim, u32) {
+        let mut sim = sim_at(30.0);
+        sim.world_mut()
+            .insert_resource(crate::rng::SimRng::new(seed));
+        let enemy = sim.spawn_ai_platoon(Side::Red, "Enemy", "E1", [0.0, 0.0, -300.0], PI);
+        assert!(sim.assign_task(
+            enemy,
+            TaskKind::Attack {
+                objective: [0.0, 0.0, 0.0],
+            },
+        ));
+        (sim, enemy)
+    }
+
+    #[test]
+    fn ai_platoon_plans_attacks_and_consolidates() {
+        let (mut sim, enemy) = enemy_attacking(1985);
+        let events = run_seconds(&mut sim, 400.0);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SimEvent::PlanMade { unit_id, .. } if *unit_id == enemy)),
+            "no plan"
+        );
+        assert!(
+            events.iter().any(
+                |e| matches!(e, SimEvent::TaskComplete { unit_id, task: "attack", .. } if *unit_id == enemy)
+            ),
+            "attack never finished"
+        );
+        let units = sim.units();
+        let platoon = units.iter().find(|u| u.id == enemy).unwrap();
+        assert_eq!(platoon.task_stage, Some(TaskStage::Done));
+        assert_eq!(platoon.plan_phase, Some(PlanPhase::Consolidate));
+        // Every section holds a defensive position near the objective.
+        for u in units.iter().filter(|u| u.parent_id == Some(enemy)) {
+            assert!(
+                matches!(u.task, Some(TaskKind::Defend { .. })),
+                "{} {:?}",
+                u.name,
+                u.task
+            );
+            assert_eq!(u.task_stage, Some(TaskStage::InPosition), "{}", u.name);
+        }
+        for s in sim.soldiers() {
+            let d = (s.position[0].powi(2) + s.position[2].powi(2)).sqrt();
+            assert!(d < 70.0, "{} is {d:.0} m from the objective", s.name);
+            assert_eq!(s.side, Side::Red);
+        }
+    }
+
+    #[test]
+    fn fire_base_suppresses_before_the_assault_goes_in() {
+        // Find a seed where the commander picks a fire base.
+        let (mut sim, enemy) = (1..50)
+            .map(enemy_attacking)
+            .find_map(|(mut sim, e)| {
+                sim.step();
+                sim.step();
+                let fb = sim.units().into_iter().find(|u| u.id == e)?.playbook;
+                (fb == Some(Playbook::FireBaseAssault)).then_some((sim, e))
+            })
+            .expect("some seed picks a fire base");
+        let events = run_seconds(&mut sim, 400.0);
+        let shots = events
+            .iter()
+            .filter(|e| matches!(e, SimEvent::ShotFired { .. }))
+            .count();
+        assert!(shots > 20, "fire base fired only {shots} times");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SimEvent::TaskComplete { unit_id, .. } if *unit_id == enemy))
+        );
+    }
+
+    #[test]
+    fn different_seeds_choose_different_playbooks() {
+        let mut seen = std::collections::HashSet::new();
+        for seed in 1..30 {
+            let (mut sim, enemy) = enemy_attacking(seed);
+            sim.step();
+            sim.step();
+            let u = sim.units().into_iter().find(|u| u.id == enemy).unwrap();
+            seen.insert(u.playbook.unwrap());
+        }
+        assert!(seen.contains(&Playbook::FireBaseAssault) && seen.contains(&Playbook::TwoUp));
+    }
+
+    #[test]
+    fn sides_cannot_command_each_other() {
+        let (mut sim, enemy) = enemy_attacking(7);
+        sim.spawn_platoon([0.0, 0.0, 0.0], 0.0);
+        let enemy_section = sim
+            .units()
+            .into_iter()
+            .find(|u| u.parent_id == Some(enemy))
+            .unwrap()
+            .id;
+        // The player tries to order an enemy section: ignored.
+        sim.order_move(&[enemy_section], [100.0, 0.0, 100.0], 0.0);
+        // The AI tries to order the player's section: ignored.
+        let mine = sim
+            .units()
+            .into_iter()
+            .find(|u| u.side == Side::Blue && u.name == "1 Section")
+            .unwrap()
+            .id;
+        sim.queue_order(
+            &[mine],
+            Order::MoveTo {
+                target: [-100.0, 0.0, 0.0],
+                facing: 0.0,
+            },
+            Issuer::Ai,
+        );
+        let events = run_seconds(&mut sim, 1.0);
+        let acked: Vec<u32> = events
+            .iter()
+            .filter_map(|e| match e {
+                SimEvent::OrderAcknowledged { unit_id, .. } => Some(*unit_id),
+                _ => None,
+            })
+            .collect();
+        assert!(!acked.contains(&mine), "AI commanded the player's section");
+        let u = sim
+            .units()
+            .into_iter()
+            .find(|u| u.id == enemy_section)
+            .unwrap();
+        assert_ne!(
+            u.order,
+            Some(Order::MoveTo {
+                target: [100.0, 0.0, 100.0],
+                facing: 0.0
+            }),
+            "player commanded an enemy section"
+        );
+        assert_eq!(sim.player_side(), Side::Blue);
     }
 
     #[test]

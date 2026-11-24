@@ -1,8 +1,8 @@
 class_name SoldierVisual
 extends StaticBody3D
 ## Placeholder look for an AI soldier: a capsule carrying their weapon, with a
-## name tag and a selection ring. It only shows what the Rust sim says; it
-## never decides anything itself.
+## name tag, a side ring (blue/red, notch = facing) and a selection ring. It
+## only shows what the Rust sim says; it never decides anything itself.
 
 const WEAPON_SCENES := {
 	"m16a2": preload("res://assets/models/weapons/m16a2.glb"),
@@ -28,6 +28,7 @@ var activity := "idle"
 var _body: MeshInstance3D
 var _label: Label3D
 var _ring: MeshInstance3D
+var _side_ring: SideRing
 var _weapon: Node3D
 var _weapon_anim: AnimationPlayer
 var _muzzle: Node3D
@@ -69,16 +70,19 @@ func _init() -> void:
 
 	_ring = MeshInstance3D.new()
 	var torus := TorusMesh.new()
-	torus.inner_radius = 0.5
-	torus.outer_radius = 0.62
+	torus.inner_radius = 0.82
+	torus.outer_radius = 0.9
 	var rmat := StandardMaterial3D.new()
 	rmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	rmat.albedo_color = Color(0.03, 0.03, 0.03)
+	rmat.albedo_color = Color(1.0, 1.0, 1.0)
 	torus.material = rmat
 	_ring.mesh = torus
 	_ring.position.y = 0.05
 	_ring.visible = false
 	add_child(_ring)
+
+	_side_ring = SideRing.new()
+	add_child(_side_ring)
 
 	_label = Label3D.new()
 	_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -104,6 +108,7 @@ func setup(info: Dictionary, shade: float, ground_y: float) -> void:
 	mat.roughness = 0.8
 	_body.material_override = mat
 	_set_weapon(info.weapon_id)
+	_side_ring.set_side(info.side)
 	update_state(info, ground_y)
 
 

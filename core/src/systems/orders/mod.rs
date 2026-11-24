@@ -19,7 +19,7 @@ mod fire_at;
 mod move_to;
 mod queries;
 
-pub use apply::{PendingOrders, apply_orders};
+pub use apply::{OrderRequest, PendingOrders, apply_orders};
 pub use fire_at::{fire_control, report_fire_complete};
 pub use move_to::{move_soldiers, report_in_position};
 

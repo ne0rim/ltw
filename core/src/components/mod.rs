@@ -4,6 +4,7 @@
 //! `crate::components` without knowing which file it lives in.
 
 pub mod combat;
+pub mod command;
 pub mod health;
 pub mod identity;
 pub mod inventory;
@@ -15,6 +16,7 @@ pub mod transform;
 pub mod weapon;
 
 pub use combat::{Activity, FireControl};
+pub use command::{Controller, Issuer, Plan, PlanPhase, Playbook, Side, Task, TaskKind, TaskStage};
 pub use health::{Health, LifeState};
 pub use identity::{CommissionedOfficer, Rank, Role, Soldier};
 pub use inventory::{Inventory, swap_magazine};

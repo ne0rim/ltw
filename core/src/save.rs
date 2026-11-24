@@ -25,10 +25,10 @@ use bevy_ecs::world::World;
 use serde::{Deserialize, Serialize};
 
 use crate::components::{
-    Activity, CommissionedOfficer, CurrentOrder, FireControl, FireTeam, FormationSlot, Gait,
-    Health, Holder, Inventory, Leader, LifeState, Members, MoveGoal, Order, ParentUnit,
-    PlayerControlled, Rank, Role, Soldier, SquadMember, Stance, Transform, Unit, UnitKind,
-    Velocity, WeaponState, weapon_spec,
+    Activity, CommissionedOfficer, Controller, CurrentOrder, FireControl, FireTeam, FormationSlot,
+    Gait, Health, Holder, Inventory, Leader, LifeState, Members, MoveGoal, Order, ParentUnit, Plan,
+    PlayerControlled, Rank, Role, Side, Soldier, SquadMember, Stance, Task, Transform, Unit,
+    UnitKind, Velocity, WeaponState, weapon_spec,
 };
 use crate::entities::platoon::NextIds;
 use crate::entities::soldier::{BodyBundle, SoldierBundle};
@@ -77,11 +77,22 @@ pub struct UnitSave {
     pub soldiers: Vec<u32>,
     pub order: Option<Order>,
     pub arrived_reported: bool,
+    // Added after version 1 shipped: defaults keep older saves loading.
+    #[serde(default)]
+    pub side: Side,
+    #[serde(default)]
+    pub controller: Controller,
+    #[serde(default)]
+    pub task: Task,
+    #[serde(default)]
+    pub plan: Option<Plan>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SoldierSave {
     pub id: u32,
+    #[serde(default)]
+    pub side: Side,
     pub name: String,
     pub rank: Rank,
     pub role: Role,
@@ -199,10 +210,16 @@ pub fn capture(world: &mut World, player: Entity) -> SaveGame {
         &Leader,
         Option<&ParentUnit>,
         Option<&CurrentOrder>,
+        (
+            Option<&Side>,
+            Option<&Controller>,
+            Option<&Task>,
+            Option<&Plan>,
+        ),
     )>();
     let mut units: Vec<UnitSave> = uq
         .iter(world)
-        .map(|(u, m, l, p, o)| {
+        .map(|(u, m, l, p, o, (side, controller, task, plan))| {
             let o = o.copied().unwrap_or_default();
             UnitSave {
                 id: u.id,
@@ -215,6 +232,10 @@ pub fn capture(world: &mut World, player: Entity) -> SaveGame {
                 soldiers: m.0.iter().filter_map(|e| soldier_id(world, *e)).collect(),
                 order: o.order,
                 arrived_reported: o.arrived_reported,
+                side: side.copied().unwrap_or_default(),
+                controller: controller.copied().unwrap_or_default(),
+                task: task.copied().unwrap_or_default(),
+                plan: plan.cloned(),
             }
         })
         .collect();
@@ -234,11 +255,12 @@ pub fn capture(world: &mut World, player: Entity) -> SaveGame {
         Option<&Inventory>,
         Has<PlayerControlled>,
         Has<CommissionedOfficer>,
+        Option<&Side>,
     )>();
     let mut soldiers: Vec<SoldierSave> = sq
         .iter(world)
         .map(
-            |(s, m, f, t, st, h, l, goal, act, fire, inv, is_player, is_officer)| {
+            |(s, m, f, t, st, h, l, goal, act, fire, inv, is_player, is_officer, side)| {
                 let inv = inv.cloned().unwrap_or_default();
                 let weapon = inv
                     .primary
@@ -249,6 +271,7 @@ pub fn capture(world: &mut World, player: Entity) -> SaveGame {
                     });
                 SoldierSave {
                     id: s.id,
+                    side: side.copied().unwrap_or_default(),
                     name: s.name.clone(),
                     rank: s.rank,
                     role: s.role,
@@ -324,7 +347,14 @@ pub fn restore(world: &mut World, player: Entity, save: &SaveGame) {
             order: u.order,
             arrived_reported: u.arrived_reported,
         };
-        units.insert(u.id, world.spawn(bundle).id());
+        bundle.side = u.side;
+        bundle.controller = u.controller;
+        bundle.task = u.task;
+        let e = world.spawn(bundle).id();
+        if let Some(plan) = &u.plan {
+            world.entity_mut(e).insert(plan.clone());
+        }
+        units.insert(u.id, e);
     }
 
     let mut soldiers: HashMap<u32, Entity> = HashMap::new();
@@ -355,6 +385,7 @@ pub fn restore(world: &mut World, player: Entity, save: &SaveGame) {
         bundle.goal = MoveGoal(s.move_goal);
         bundle.activity = s.activity;
         bundle.fire = s.fire;
+        bundle.side = s.side;
 
         let e = if s.is_player {
             // The player keeps the body the client reports.
@@ -426,6 +457,9 @@ pub fn restore(world: &mut World, player: Entity, save: &SaveGame) {
 
 #[cfg(test)]
 mod tests {
+    use std::f32::consts::PI;
+
+    use crate::components::TaskKind;
     use crate::sim::{Sim, SimConfig};
 
     use super::*;
@@ -438,6 +472,14 @@ mod tests {
         let id = |name: &str| units.iter().find(|u| u.name == name).unwrap().id;
         sim.order_fire_at(&[id("1 Section")], [0.0, 0.0, -80.0]);
         sim.order_move(&[id("2 Section")], [20.0, 0.0, -30.0], 0.3);
+        // An enemy platoon part-way through an AI attack.
+        let enemy = sim.spawn_ai_platoon(Side::Red, "Enemy", "E1", [0.0, 0.0, -300.0], PI);
+        sim.assign_task(
+            enemy,
+            TaskKind::Attack {
+                objective: [0.0, 0.0, -20.0],
+            },
+        );
         for _ in 0..90 {
             sim.step();
         }

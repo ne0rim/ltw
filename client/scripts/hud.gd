@@ -107,6 +107,7 @@ func _dev_lines() -> PackedStringArray:
 		"Rust   pos %.1f, %.1f, %.1f   speed %.2f m/s   %s, %s" % [
 			sp.x, sp.y, sp.z, s.speed, s.stance_name, s.gait_name],
 		"Last sim event: %s" % _last_sim_event,
+		"Enemy (AI): %s" % " | ".join(platoon.enemy_status_lines()),
 	])
 
 

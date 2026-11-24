@@ -7,7 +7,7 @@
 
 use bevy_ecs::resource::Resource;
 
-use crate::components::{Gait, Stance};
+use crate::components::{Gait, Side, Stance};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SimEvent {
@@ -19,7 +19,29 @@ pub enum SimEvent {
         speed: f32,
     },
     /// A platoon was created.
-    PlatoonSpawned { unit_id: u32, soldiers: u32 },
+    PlatoonSpawned {
+        unit_id: u32,
+        soldiers: u32,
+        side: Side,
+    },
+    /// A unit was given a task (by the script or its commander).
+    TaskAssigned {
+        unit_id: u32,
+        callsign: String,
+        task: &'static str,
+    },
+    /// A unit finished its task.
+    TaskComplete {
+        unit_id: u32,
+        callsign: String,
+        task: &'static str,
+    },
+    /// A commander chose how to carry out their task.
+    PlanMade {
+        unit_id: u32,
+        callsign: String,
+        playbook: &'static str,
+    },
     /// A soldier swapped magazines.
     Reloaded {
         soldier_id: u32,

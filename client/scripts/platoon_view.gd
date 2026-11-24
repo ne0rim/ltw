@@ -16,6 +16,9 @@ const SHADES := {"platoon_hq": 0.9, "rifle_section_1": 0.72, "rifle_section_2": 
 var soldiers: Array = []                 # latest snapshot (Array of Dictionary)
 var units: Array = []
 var player_info: Dictionary = {}
+## The side the player fights for ("blue" or "red"). Lists and keys only show
+## this side's units; visuals are made for everyone.
+var my_side := "blue"
 
 var _sim: SimBridge
 var _terrain: Terrain
@@ -24,30 +27,28 @@ var _effects: ShotEffects
 var _selected := PackedInt32Array()
 
 
-## Spawn the platoon in the sim and build visuals for everyone but the player.
+## Spawn the player's platoon in the sim, then show it (see `attach`).
 func spawn_platoon(sim: SimBridge, terrain: Terrain, origin: Vector3, yaw: float) -> void:
 	sim.spawn_platoon(origin, yaw)
 	attach(sim, terrain)
 
 
-## Build visuals for the platoon the sim already has (e.g. after loading a save).
+## Start showing the sim's soldiers (both sides). Visuals for soldiers added
+## later, such as an enemy platoon, appear on the next refresh.
 func attach(sim: SimBridge, terrain: Terrain) -> void:
 	_sim = sim
 	_terrain = terrain
 	_effects = ShotEffects.new()
 	_effects.name = "ShotEffects"
 	add_child(_effects)
-	units = _sim.get_units()
-	var shade_for := _unit_shades()
+	my_side = _sim.get_player_side()
+	# The player gets a side ring too (looking down, you can see your own).
+	if commander and not commander.has_node("SideRing"):
+		var ring := SideRing.new()
+		ring.name = "SideRing"
+		commander.add_child(ring)  # the player's origin is at their feet
+		ring.set_side(my_side)
 	refresh()
-	for info in soldiers:
-		if info.is_player:
-			continue
-		var v := SoldierVisual.new()
-		add_child(v)
-		var p: Vector3 = info.position
-		v.setup(info, shade_for.get(info.unit_id, 0.7), ground_height(p.x, p.z))
-		_visuals[info.id] = v
 	_sim.ticked.connect(func(_t: int, _n: int) -> void: refresh())
 	_sim.sim_event.connect(_on_sim_event)
 
@@ -66,9 +67,22 @@ func refresh() -> void:
 		var y := ground_height(p.x, p.z)
 		ids.append(info.id)
 		heights.append(y)
-		if _visuals.has(info.id):
-			_visuals[info.id].update_state(info, y)
+		if not _visuals.has(info.id):
+			_add_visual(info, y)
+		_visuals[info.id].update_state(info, y)
 	_sim.set_soldier_heights(ids, heights)
+
+
+func _add_visual(info: Dictionary, ground_y: float) -> void:
+	var v := SoldierVisual.new()
+	add_child(v)
+	v.setup(info, _unit_shades().get(info.unit_id, 0.7), ground_y)
+	_visuals[info.id] = v
+
+
+## Units on the player's side (not the platoon itself), in id order.
+func my_units() -> Array:
+	return units.filter(func(u: Dictionary) -> bool: return u.side == my_side and u.kind != "platoon")
 
 
 func ground_height(x: float, z: float) -> float:
@@ -93,9 +107,7 @@ func unit(unit_id: int) -> Dictionary:
 func summary() -> String:
 	var parts := PackedStringArray()
 	var total := 0
-	for u in units:
-		if u.kind == "platoon":
-			continue
+	for u in my_units():
 		var n: int = u.soldier_ids.size()
 		total += n
 		parts.append("%s %d" % [_short_name(u), n])
@@ -105,12 +117,23 @@ func summary() -> String:
 ## One line per unit: "[11A] 1 Sect · 10 men · moving · 2070 rds" (▶ = selected).
 func unit_status_lines() -> PackedStringArray:
 	var out := PackedStringArray()
-	for u in units:
-		if u.kind == "platoon":
-			continue
+	for u in my_units():
 		var mark := "▶" if _selected.has(u.id) else " "
 		out.append("%s[%s] %s · %d men · %s · %d rds" % [
 			mark, u.callsign, _short_name(u), u.soldier_ids.size(), u.status, u.rounds])
+	return out
+
+
+## One line per enemy unit, for the dev panel (the player won't get this
+## once sight exists): "[E1] Enemy Platoon · attack (fire base + assault) · moving".
+func enemy_status_lines() -> PackedStringArray:
+	var out := PackedStringArray()
+	for u in units:
+		if u.side == my_side:
+			continue
+		var how: String = (" (%s)" % u.playbook) if u.playbook != "" else ""
+		out.append("[%s] %s · %s%s · %s · %s" % [u.callsign, u.name, u.task, how,
+			u.task_stage, u.status])
 	return out
 
 
@@ -129,11 +152,11 @@ func _on_sim_event(kind: String, data: Dictionary) -> void:
 
 func _unit_shades() -> Dictionary:
 	var out := {}
-	var section_no := 0
+	var section_no := {}  # per side
 	for u in units:
 		if u.kind == "platoon_hq":
 			out[u.id] = SHADES.platoon_hq
 		elif u.kind == "rifle_section":
-			section_no += 1
-			out[u.id] = SHADES.get("rifle_section_%d" % section_no, 0.6)
+			section_no[u.side] = section_no.get(u.side, 0) + 1
+			out[u.id] = SHADES.get("rifle_section_%d" % section_no[u.side], 0.6)
 	return out

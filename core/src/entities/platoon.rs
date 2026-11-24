@@ -1,8 +1,9 @@
 //! The platoon entity tree: templates and spawning.
 //!
 //! Canadian rifle platoon (1985): platoon HQ of 6 + 3 rifle sections of 10
-//! (36 total). The player is the platoon commander in the HQ. No size limits
-//! are enforced yet; the templates below are just the default build.
+//! (36 total). Both sides use the same build for now. On the player's side the
+//! player is the platoon commander in the HQ. No size limits are enforced yet;
+//! the templates below are just the default build.
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
@@ -16,8 +17,8 @@ use crate::components::Role::{
     PlatoonCommander, PlatoonWarrant, Rifleman, Section2IC, SectionCommander, Signaller,
 };
 use crate::components::{
-    CommissionedOfficer, FireTeam, FormationSlot, Leader, Members, ParentUnit, Rank, Role, Soldier,
-    SquadMember, Transform, UnitKind, place,
+    CommissionedOfficer, Controller, FireTeam, FormationSlot, Leader, Members, ParentUnit, Rank,
+    Role, Side, Soldier, SquadMember, Transform, UnitKind, place,
 };
 use crate::rng::SimRng;
 
@@ -89,89 +90,120 @@ const PLATOON_HQ: [Slot; 6] = [
 /// Where each section sits relative to the platoon commander: (right, forward) metres.
 const SECTION_ANCHORS: [(f32, f32); 3] = [(-35.0, 25.0), (0.0, 30.0), (35.0, 25.0)];
 
-/// Spawn a platoon around `leader` (the player's entity), which becomes the
-/// platoon commander. Returns the platoon entity.
-pub fn spawn_platoon(world: &mut World, leader: Entity, origin: [f32; 3], yaw: f32) -> Entity {
+/// What kind of platoon to spawn, and for whom.
+#[derive(Debug, Clone, Copy)]
+pub struct PlatoonSpec<'a> {
+    pub side: Side,
+    /// Who commands the platoon and its sections.
+    pub controller: Controller,
+    pub name: &'a str,
+    /// Platoon callsign; sections get A, B, C appended.
+    pub callsign: &'a str,
+    /// An existing entity that becomes the platoon commander (the player's
+    /// body). None spawns a new soldier in that slot.
+    pub commander: Option<Entity>,
+}
+
+/// Spawn a platoon: platoon HQ around `origin`, rifle sections ahead of it,
+/// everyone facing `yaw`. Returns the platoon entity.
+pub fn spawn_platoon(world: &mut World, spec: PlatoonSpec, origin: [f32; 3], yaw: f32) -> Entity {
     let mut ids = *world.get_resource_or_insert_with(NextIds::default);
     let mut names = shuffled_names(world);
 
-    let mut bundle = UnitBundle::new(next(&mut ids.unit), UnitKind::Platoon, "1 Platoon", "11");
-    bundle.leader = Leader(Some(leader));
+    let mut bundle = UnitBundle::new(
+        next(&mut ids.unit),
+        UnitKind::Platoon,
+        spec.name,
+        spec.callsign,
+    );
+    bundle.side = spec.side;
+    bundle.controller = spec.controller;
     let platoon = world.spawn(bundle).id();
 
+    let mut ctx = SquadCtx {
+        ids: &mut ids,
+        names: &mut names,
+        platoon,
+        spec,
+        origin,
+        yaw,
+    };
     let mut squads = Vec::new();
 
     // Platoon headquarters (around the commander).
-    let hq = spawn_squad(
+    squads.push(spawn_squad(
         world,
-        &mut ids,
-        &mut names,
-        platoon,
+        &mut ctx,
         UnitKind::PlatoonHeadquarters,
         "Platoon HQ",
-        "11",
+        spec.callsign,
         &PLATOON_HQ,
-        origin,
         (0.0, 0.0),
-        yaw,
-        Some(leader),
-    );
-    squads.push(hq);
+        spec.commander,
+    ));
 
-    // Rifle sections: 1, 2 and 3 Section, callsigns 11A, 11B, 11C.
+    // Rifle sections: 1, 2 and 3 Section, callsigns <platoon>A, B, C.
     for (i, anchor) in SECTION_ANCHORS.iter().enumerate() {
         let name = format!("{} Section", i + 1);
-        let callsign = format!("11{}", (b'A' + i as u8) as char);
+        let callsign = format!("{}{}", spec.callsign, (b'A' + i as u8) as char);
         squads.push(spawn_squad(
             world,
-            &mut ids,
-            &mut names,
-            platoon,
+            &mut ctx,
             UnitKind::RifleSection,
             &name,
             &callsign,
             &RIFLE_SECTION,
-            origin,
             *anchor,
-            yaw,
             None,
         ));
     }
 
+    // The platoon commander (first in the HQ) leads the platoon.
+    let commander = world.get::<Leader>(squads[0]).and_then(|l| l.0);
+    world.get_mut::<Leader>(platoon).unwrap().0 = commander;
     world.get_mut::<Members>(platoon).unwrap().0 = squads;
     world.insert_resource(ids);
     platoon
 }
 
+/// Shared state while spawning one platoon's squads.
+struct SquadCtx<'a, 'b> {
+    ids: &'a mut NextIds,
+    names: &'a mut Vec<&'static str>,
+    platoon: Entity,
+    spec: PlatoonSpec<'b>,
+    origin: [f32; 3],
+    yaw: f32,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_squad(
     world: &mut World,
-    ids: &mut NextIds,
-    names: &mut Vec<&'static str>,
-    platoon: Entity,
+    ctx: &mut SquadCtx,
     kind: UnitKind,
     name: &str,
     callsign: &str,
     template: &[Slot],
-    origin: [f32; 3],
     anchor: (f32, f32),
-    yaw: f32,
     existing_leader: Option<Entity>,
 ) -> Entity {
-    let squad = world
-        .spawn((
-            UnitBundle::new(next(&mut ids.unit), kind, name, callsign),
-            ParentUnit(platoon),
-        ))
-        .id();
+    let mut unit = UnitBundle::new(next(&mut ctx.ids.unit), kind, name, callsign);
+    unit.side = ctx.spec.side;
+    unit.controller = ctx.spec.controller;
+    let squad = world.spawn((unit, ParentUnit(ctx.platoon))).id();
 
     let mut members = Vec::new();
     for (i, s) in template.iter().enumerate() {
-        let position = place(origin, yaw, anchor.0 + s.offset.0, anchor.1 + s.offset.1);
-        let bundle = SoldierBundle::new(
+        let position = place(
+            ctx.origin,
+            ctx.yaw,
+            anchor.0 + s.offset.0,
+            anchor.1 + s.offset.1,
+        );
+        let mut bundle = SoldierBundle::new(
             Soldier {
-                id: next(&mut ids.soldier),
-                name: names.pop().unwrap_or("Smith").to_string(),
+                id: next(&mut ctx.ids.soldier),
+                name: ctx.names.pop().unwrap_or("Smith").to_string(),
                 rank: s.rank,
                 role: s.role,
             },
@@ -185,6 +217,7 @@ fn spawn_squad(
                 forward: s.offset.1,
             },
         );
+        bundle.side = ctx.spec.side;
         let loadout = Loadout::basic(s.role);
 
         // The player's entity already exists: make it a soldier but keep its
@@ -194,7 +227,15 @@ fn spawn_squad(
                 make_soldier(world, player, bundle, &loadout);
                 player
             }
-            _ => spawn_soldier(world, bundle, Transform { position, yaw }, &loadout),
+            _ => spawn_soldier(
+                world,
+                bundle,
+                Transform {
+                    position,
+                    yaw: ctx.yaw,
+                },
+                &loadout,
+            ),
         };
         if s.rank.is_officer() && matches!(s.role, Role::PlatoonCommander) {
             world.entity_mut(e).insert(CommissionedOfficer);
