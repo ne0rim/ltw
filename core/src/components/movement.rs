@@ -4,7 +4,18 @@ use bevy_ecs::component::Component;
 
 /// Body posture. Affects speed, profile (how visible or hittable) and accuracy.
 /// The numbers must match `Player.Stance` in the Godot client.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Component,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 #[repr(u8)]
 pub enum Stance {
     #[default]
@@ -34,7 +45,18 @@ impl Stance {
 /// How the soldier is moving. Crouched and prone movement reports `Walk`;
 /// the stance sets the speed.
 /// The numbers must match `Player.Gait` in the Godot client.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Component,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 #[repr(u8)]
 pub enum Gait {
     #[default]

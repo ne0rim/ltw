@@ -6,6 +6,7 @@
 [ext_resource type="PackedScene" path="res://scenes/ui/hud.tscn" id="4_hud"]
 [ext_resource type="Script" uid="uid://jkekbtlu1yix" path="res://scripts/platoon_view.gd" id="5_platoon"]
 [ext_resource type="Script" uid="uid://d18rcc0cqd6eo" path="res://scripts/command_input.gd" id="6_command"]
+[ext_resource type="PackedScene" path="res://scenes/props/ammo_box.tscn" id="7_ammo"]
 
 [sub_resource type="ProceduralSkyMaterial" id="Sky_mat"]
 sky_top_color = Color(0.45, 0.45, 0.45, 1)
@@ -46,6 +47,12 @@ script = ExtResource("2_terrain")
 
 [node name="Player" parent="." unique_id=1749561026 instance=ExtResource("3_player")]
 
+[node name="AmmoBox" parent="." node_paths=PackedStringArray("sim", "player", "terrain") instance=ExtResource("7_ammo")]
+transform = Transform3D(0.866025, 0, 0.5, 0, 1, 0, -0.5, 0, 0.866025, 2.5, 0, -4)
+sim = NodePath("../SimBridge")
+player = NodePath("../Player")
+terrain = NodePath("../Terrain")
+
 [node name="Platoon" type="Node3D" parent="." unique_id=1647293171 node_paths=PackedStringArray("commander")]
 script = ExtResource("5_platoon")
 commander = NodePath("../Player")
@@ -56,9 +63,10 @@ sim = NodePath("../SimBridge")
 platoon = NodePath("../Platoon")
 player = NodePath("../Player")
 
-[node name="HUD" parent="." unique_id=1289853959 node_paths=PackedStringArray("sim", "player", "platoon", "command", "view") instance=ExtResource("4_hud")]
+[node name="HUD" parent="." unique_id=1289853959 node_paths=PackedStringArray("sim", "player", "platoon", "command", "view", "terrain") instance=ExtResource("4_hud")]
 sim = NodePath("../SimBridge")
 player = NodePath("../Player")
 platoon = NodePath("../Platoon")
 command = NodePath("../Command")
 view = NodePath("../Player/Head/Camera/ViewModel")
+terrain = NodePath("../Terrain")

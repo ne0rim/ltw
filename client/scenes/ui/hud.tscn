@@ -3,6 +3,7 @@
 [ext_resource type="Script" path="res://scripts/hud.gd" id="1_hud"]
 [ext_resource type="Script" path="res://scripts/hud_panel.gd" id="2_panel"]
 [ext_resource type="PackedScene" path="res://scenes/ui/crosshair.tscn" id="3_crosshair"]
+[ext_resource type="PackedScene" path="res://scenes/ui/tactical_map.tscn" id="4_map"]
 
 [node name="HUD" type="CanvasLayer"]
 script = ExtResource("1_hud")
@@ -40,3 +41,5 @@ grow_horizontal = 0
 mouse_filter = 2
 script = ExtResource("2_panel")
 title = "PLATOON"
+
+[node name="TacticalMap" parent="." instance=ExtResource("4_map")]

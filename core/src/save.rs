@@ -119,7 +119,10 @@ pub enum SaveError {
     Io(io::Error),
     Format(serde_json::Error),
     /// The file was written by a version of the game this build can't read.
-    Version { found: u32, expected: u32 },
+    Version {
+        found: u32,
+        expected: u32,
+    },
 }
 
 impl std::fmt::Display for SaveError {

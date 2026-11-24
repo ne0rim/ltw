@@ -3,7 +3,9 @@
 use bevy_ecs::component::Component;
 
 /// What the soldier is doing right now (for the client and AI).
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Component, Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum Activity {
     #[default]
     Idle,
@@ -24,7 +26,9 @@ impl Activity {
 }
 
 /// Firing state for an ordered fire mission.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Component, Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize,
+)]
 pub struct FireControl {
     /// Point the soldier is firing at (None = not firing).
     pub target: Option<[f32; 3]>,

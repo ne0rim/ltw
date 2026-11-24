@@ -20,6 +20,7 @@ use crate::components::{
     Role, Soldier, SquadMember, Stance, Transform, Unit, UnitKind, Velocity, WeaponState,
     swap_magazine,
 };
+use crate::entities::soldier::Loadout;
 use crate::entities::{platoon, player};
 use crate::events::{SimEvent, SimEvents};
 use crate::rng::SimRng;
@@ -414,6 +415,34 @@ impl Sim {
     /// the new magazine, or None if there are no loaded spares.
     pub fn player_reload(&mut self) -> Option<u32> {
         self.reload_soldier(self.player)
+    }
+
+    /// Refill the player's pouches from an ammo box. Returns the number of
+    /// full spare magazines they now carry.
+    pub fn player_resupply(&mut self) -> Option<u32> {
+        self.resupply_soldier(self.player)
+    }
+
+    /// Refill a soldier's pouches to their basic load: every spare magazine
+    /// full (partly used ones are swapped for full ones). The magazine in the
+    /// weapon is left alone. Clears "out of ammo" so AI soldiers fire again.
+    pub fn resupply_soldier(&mut self, soldier: Entity) -> Option<u32> {
+        let role = self.world.get::<Soldier>(soldier)?.role;
+        let weapon = self.world.get::<Inventory>(soldier)?.primary?;
+        let capacity = self.world.get::<WeaponState>(weapon)?.magazine_capacity;
+        let count = Loadout::basic(role).spare_magazines;
+        self.world.get_mut::<Inventory>(soldier)?.magazines = vec![capacity; count as usize];
+        if let Some(mut fc) = self.world.get_mut::<FireControl>(soldier) {
+            fc.out_of_ammo = false;
+        }
+        let soldier_id = self.world.get::<Soldier>(soldier).map_or(0, |s| s.id);
+        self.world
+            .resource_mut::<SimEvents>()
+            .push(SimEvent::Resupplied {
+                soldier_id,
+                magazines: count,
+            });
+        Some(count)
     }
 
     /// Swap a soldier's magazine for their fullest spare. Partly used magazines
@@ -815,6 +844,28 @@ mod tests {
                 "two soldiers share a spot"
             );
         }
+    }
+
+    #[test]
+    fn resupply_refills_every_spare_magazine() {
+        let mut sim = Sim::default();
+        sim.spawn_platoon([0.0; 3], 0.0);
+        for _ in 0..7 {
+            sim.report_player_rounds(0);
+            sim.player_reload();
+        }
+        let before = sim.soldiers().into_iter().find(|s| s.is_player).unwrap();
+        assert!(before.magazines.is_empty(), "spent every spare first");
+
+        assert_eq!(sim.player_resupply(), Some(6));
+        let after = sim.soldiers().into_iter().find(|s| s.is_player).unwrap();
+        assert_eq!(after.magazines, vec![30; 6]);
+        assert_eq!(after.rounds_in_weapon, before.rounds_in_weapon);
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::Resupplied { magazines: 6, .. }))
+        );
     }
 
     #[test]

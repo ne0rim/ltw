@@ -5,17 +5,20 @@ extends CanvasLayer
 ##   Ctrl+Alt+1  Dev       sim tick, Godot vs Rust player state, last sim event
 ##   Ctrl+Alt+2  Controls  every key
 ##   Ctrl+Alt+3  Game      you, your weapon, the platoon and each section
+##   T           Tactical map (hides the panels while open)
 
 @export var sim: SimBridge
 @export var player: Player
 @export var platoon: PlatoonView
 @export var command: CommandInput
 @export var view: ViewModel
+@export var terrain: Terrain
 
 @onready var crosshair: Control = $Crosshair
 @onready var dev_panel: HudPanel = $DevPanel
 @onready var controls_panel: HudPanel = $ControlsPanel
 @onready var game_panel: HudPanel = $GamePanel
+@onready var tactical_map: TacticalMap = $TacticalMap
 
 const CONTROLS := [
 	"Move",
@@ -25,6 +28,9 @@ const CONTROLS := [
 	"Weapon",
 	"  LMB fire · RMB aim",
 	"  R reload · B fire mode",
+	"  F use (ammo box: refill magazines)",
+	"Map",
+	"  T tactical map",
 	"Command",
 	"  Ctrl+1/2/3 select section · Ctrl+4 HQ",
 	"  Ctrl+M move here · Ctrl+F fire here",
@@ -36,14 +42,24 @@ const CONTROLS := [
 ]
 
 var _last_sim_event := "(none yet)"
+## Panels that were showing before the map opened.
+var _panels_before_map: Array[HudPanel] = []
 
 
 func _ready() -> void:
 	controls_panel.set_lines(PackedStringArray(CONTROLS))
+	tactical_map.setup(terrain, platoon, player, command)
 	sim.sim_event.connect(_on_sim_event)
 
 
 func _input(event: InputEvent) -> void:
+	var map_key := event.is_action_pressed("tactical_map", false, true)
+	if map_key or (tactical_map.visible and event.is_action_pressed("ui_cancel")):
+		_toggle_map()
+		get_viewport().set_input_as_handled()
+		return
+	if tactical_map.visible:
+		return  # panels stay hidden while the map is open
 	# _input runs before the command keys' _unhandled_input, so Ctrl+Alt+1
 	# doesn't also select 1 Section (Ctrl+1).
 	for pair in [["hud_dev", dev_panel], ["hud_controls", controls_panel], ["hud_game", game_panel]]:
@@ -53,8 +69,22 @@ func _input(event: InputEvent) -> void:
 			return
 
 
+func _toggle_map() -> void:
+	if tactical_map.visible:
+		tactical_map.close()
+		for p in _panels_before_map:
+			p.visible = true
+		_panels_before_map.clear()
+	else:
+		for p in [dev_panel, controls_panel, game_panel]:
+			if p.visible:
+				_panels_before_map.append(p)
+				p.visible = false
+		tactical_map.open()
+
+
 func _process(_delta: float) -> void:
-	crosshair.visible = not player.is_aiming
+	crosshair.visible = not player.is_aiming and not tactical_map.visible
 	if dev_panel.visible:
 		dev_panel.set_lines(_dev_lines())
 	if game_panel.visible:

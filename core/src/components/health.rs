@@ -17,7 +17,9 @@ impl Default for Health {
     }
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Component, Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum LifeState {
     #[default]
     Healthy,

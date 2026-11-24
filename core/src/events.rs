@@ -26,6 +26,8 @@ pub enum SimEvent {
         rounds: u32,
         magazines_left: u32,
     },
+    /// A soldier refilled their pouches from an ammo box.
+    Resupplied { soldier_id: u32, magazines: u32 },
     /// A unit accepted an order ("move", "fire").
     OrderAcknowledged {
         unit_id: u32,

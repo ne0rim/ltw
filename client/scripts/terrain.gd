@@ -72,6 +72,27 @@ func get_height_at(world_x: float, world_z: float) -> float:
 	return global_position.y + lerpf(lerpf(h00, h10, tx), lerpf(h01, h11, tx), tz)
 
 
+## World-space XZ area the terrain covers (x = world x, y = world z).
+func get_bounds() -> Rect2:
+	var half := size_m * 0.5
+	var c := global_position
+	return Rect2(c.x - half, c.z - half, size_m, size_m)
+
+
+## Height samples (metres, relative to this node), row by row along +Z.
+## There are `get_sample_count()` samples per side, `get_cell_size()` metres apart.
+func get_height_grid() -> PackedFloat32Array:
+	return _heights
+
+
+func get_sample_count() -> int:
+	return _samples
+
+
+func get_cell_size() -> float:
+	return _cell
+
+
 func generate() -> void:
 	_regen_queued = false
 	_build_heights()

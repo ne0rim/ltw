@@ -294,6 +294,13 @@ impl SimBridge {
         self.sim.player_reload().map_or(-1, |r| r as i64)
     }
 
+    /// Refill the player's spare magazines from an ammo box. Returns how many
+    /// full spare magazines they now carry, or -1 if they can't be resupplied.
+    #[func]
+    fn player_resupply(&mut self) -> i64 {
+        self.sim.player_resupply().map_or(-1, |m| m as i64)
+    }
+
     /// Advance exactly one tick (works while paused).
     #[func]
     fn step(&mut self) {
@@ -339,6 +346,16 @@ impl SimBridge {
                         "soldier_id" => &(soldier_id as i64).to_variant(),
                         "rounds" => &(rounds as i64).to_variant(),
                         "magazines_left" => &(magazines_left as i64).to_variant(),
+                    },
+                ),
+                SimEvent::Resupplied {
+                    soldier_id,
+                    magazines,
+                } => (
+                    "resupplied",
+                    vdict! {
+                        "soldier_id" => &(soldier_id as i64).to_variant(),
+                        "magazines" => &(magazines as i64).to_variant(),
                     },
                 ),
                 SimEvent::OrderAcknowledged {
