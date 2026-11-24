@@ -3,9 +3,17 @@
 //! Every ticker setting is an exported property. You can change it in the
 //! Inspector, including while the game runs (Remote scene tree).
 
-use godot::prelude::*;
-use ltw_core::{Gait, PlayerReport, SimEvent, Stance, Transform, Velocity};
+use godot::builtin::{
+    GString, PackedFloat32Array, PackedInt32Array, VarArray, VarDictionary, Vector3, vdict,
+};
+use godot::classes::{INode, Node};
+use godot::global::godot_error;
+use godot::meta::ToGodot;
+use godot::obj::{Base, WithUserSignals};
+use godot::register::{GodotClass, godot_api};
+
 use ltw_core::sim::{Sim, SimConfig, defaults};
+use ltw_core::{Gait, PlayerReport, SimEvent, Stance, Transform, Velocity};
 
 #[derive(GodotClass)]
 #[class(init, base = Node)]
@@ -79,13 +87,24 @@ impl SimBridge {
     /// sim the player's state. It's applied at the start of the next tick.
     /// `stance` and `gait` are the `Player.Stance` / `Player.Gait` enum values.
     #[func]
-    fn report_player(&mut self, position: Vector3, yaw: f32, velocity: Vector3, stance: i64, gait: i64) {
-        let (Some(stance), Some(gait)) = (Stance::from_index(stance), Gait::from_index(gait)) else {
+    fn report_player(
+        &mut self,
+        position: Vector3,
+        yaw: f32,
+        velocity: Vector3,
+        stance: i64,
+        gait: i64,
+    ) {
+        let (Some(stance), Some(gait)) = (Stance::from_index(stance), Gait::from_index(gait))
+        else {
             godot_error!("report_player: bad stance {stance} or gait {gait}");
             return;
         };
         self.sim.report_player(PlayerReport {
-            transform: Transform { position: [position.x, position.y, position.z], yaw },
+            transform: Transform {
+                position: [position.x, position.y, position.z],
+                yaw,
+            },
             velocity: Velocity([velocity.x, velocity.y, velocity.z]),
             stance,
             gait,
@@ -196,7 +215,8 @@ impl SimBridge {
     #[func]
     fn order_move(&mut self, unit_ids: PackedInt32Array, target: Vector3, facing: f32) {
         let ids: Vec<u32> = unit_ids.as_slice().iter().map(|i| *i as u32).collect();
-        self.sim.order_move(&ids, [target.x, target.y, target.z], facing);
+        self.sim
+            .order_move(&ids, [target.x, target.y, target.z], facing);
     }
 
     /// Order units (by unit id) to fire at `target` until given another order.
@@ -246,7 +266,12 @@ impl SimBridge {
     fn flush_events(&mut self) {
         for event in self.sim.drain_events() {
             let (kind, data) = match event {
-                SimEvent::PlayerMovementChanged { tick, stance, gait, speed } => (
+                SimEvent::PlayerMovementChanged {
+                    tick,
+                    stance,
+                    gait,
+                    speed,
+                } => (
                     "player_movement_changed",
                     vdict! {
                         "tick" => &(tick as i64).to_variant(),
@@ -262,7 +287,11 @@ impl SimBridge {
                         "soldiers" => &(soldiers as i64).to_variant(),
                     },
                 ),
-                SimEvent::Reloaded { soldier_id, rounds, magazines_left } => (
+                SimEvent::Reloaded {
+                    soldier_id,
+                    rounds,
+                    magazines_left,
+                } => (
                     "reloaded",
                     vdict! {
                         "soldier_id" => &(soldier_id as i64).to_variant(),
@@ -270,7 +299,11 @@ impl SimBridge {
                         "magazines_left" => &(magazines_left as i64).to_variant(),
                     },
                 ),
-                SimEvent::OrderAcknowledged { unit_id, callsign, order } => (
+                SimEvent::OrderAcknowledged {
+                    unit_id,
+                    callsign,
+                    order,
+                } => (
                     "order_acknowledged",
                     vdict! {
                         "unit_id" => &(unit_id as i64).to_variant(),
@@ -285,7 +318,11 @@ impl SimBridge {
                         "callsign" => &callsign.to_variant(),
                     },
                 ),
-                SimEvent::ShotFired { soldier_id, target, rounds } => (
+                SimEvent::ShotFired {
+                    soldier_id,
+                    target,
+                    rounds,
+                } => (
                     "shot_fired",
                     vdict! {
                         "soldier_id" => &(soldier_id as i64).to_variant(),

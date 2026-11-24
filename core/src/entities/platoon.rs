@@ -1,15 +1,30 @@
-//! Unit organisation: spawning a platoon and laying out its formation.
+//! The platoon entity tree: templates and spawning.
 //!
 //! Canadian rifle platoon (1985): platoon HQ of 6 + 3 rifle sections of 10
 //! (36 total). The player is the platoon commander in the HQ. No size limits
 //! are enforced yet; the templates below are just the default build.
 
-use bevy_ecs::prelude::*;
+use bevy_ecs::entity::Entity;
+use bevy_ecs::resource::Resource;
+use bevy_ecs::world::World;
 
-use crate::components::{Gait, Stance, Transform, Velocity};
-use crate::orders::CurrentOrder;
+use crate::components::Rank::{
+    Corporal, Lieutenant, MasterCorporal, Private, Sergeant, WarrantOfficer,
+};
+use crate::components::Role::{
+    AntiArmourGunner, GroupLeader, LightMachineGunner, MachineGunner, MedicalAssistant,
+    PlatoonCommander, PlatoonWarrant, Rifleman, Section2IC, SectionCommander, Signaller,
+};
+use crate::components::{
+    CommissionedOfficer, FireTeam, FormationSlot, Leader, Members, ParentUnit, Rank, Role, Soldier,
+    SquadMember, Transform, UnitKind, place,
+};
 use crate::rng::SimRng;
-use crate::soldier::*;
+
+use super::soldier::{Loadout, SoldierBundle, make_soldier, spawn_soldier};
+use super::unit::UnitBundle;
+
+use crate::components::FireTeam::{Alpha, Bravo};
 
 /// Hands out stable ids for soldiers and units.
 #[derive(Resource, Debug, Clone, Copy)]
@@ -20,7 +35,10 @@ pub struct NextIds {
 
 impl Default for NextIds {
     fn default() -> Self {
-        Self { soldier: 1, unit: 1 }
+        Self {
+            soldier: 1,
+            unit: 1,
+        }
     }
 }
 
@@ -34,12 +52,13 @@ struct Slot {
 }
 
 const fn slot(role: Role, rank: Rank, team: Option<FireTeam>, offset: (f32, f32)) -> Slot {
-    Slot { role, rank, team, offset }
+    Slot {
+        role,
+        rank,
+        team,
+        offset,
+    }
 }
-
-use FireTeam::{Alpha, Bravo};
-use Rank::*;
-use Role::*;
 
 /// Rifle section: section commander with the Carl G gunner, and two assault
 /// groups (Alpha led by the 2IC, Bravo by a corporal), each with a C2 gunner.
@@ -72,14 +91,70 @@ const SECTION_ANCHORS: [(f32, f32); 3] = [(-35.0, 25.0), (0.0, 30.0), (35.0, 25.
 
 /// English and French Canadian surnames.
 const SURNAMES: [&str; 64] = [
-    "Tremblay", "MacDonald", "Gagnon", "Campbell", "Roy", "Fraser", "Cote", "Stewart", "Bouchard",
-    "MacLeod", "Gauthier", "Wilson", "Morin", "Murray", "Lavoie", "Robertson", "Fortin", "Thompson",
-    "Gagne", "Mackenzie", "Ouellet", "Anderson", "Pelletier", "Taylor", "Belanger", "Martin",
-    "Levesque", "Smith", "Bergeron", "Brown", "Leblanc", "Johnston", "Paquette", "Graham", "Girard",
-    "Ross", "Simard", "Morrison", "Boucher", "Reid", "Caron", "Kennedy", "Beaulieu", "Hamilton",
-    "Cloutier", "Scott", "Dube", "Grant", "Poirier", "Ferguson", "Fournier", "Bell", "Lapointe",
-    "Clarke", "Leclerc", "Doucet", "Hebert", "Sinclair", "Lefebvre", "Cameron", "Gaudreault",
-    "Mercier", "MacKay", "Theriault",
+    "Tremblay",
+    "MacDonald",
+    "Gagnon",
+    "Campbell",
+    "Roy",
+    "Fraser",
+    "Cote",
+    "Stewart",
+    "Bouchard",
+    "MacLeod",
+    "Gauthier",
+    "Wilson",
+    "Morin",
+    "Murray",
+    "Lavoie",
+    "Robertson",
+    "Fortin",
+    "Thompson",
+    "Gagne",
+    "Mackenzie",
+    "Ouellet",
+    "Anderson",
+    "Pelletier",
+    "Taylor",
+    "Belanger",
+    "Martin",
+    "Levesque",
+    "Smith",
+    "Bergeron",
+    "Brown",
+    "Leblanc",
+    "Johnston",
+    "Paquette",
+    "Graham",
+    "Girard",
+    "Ross",
+    "Simard",
+    "Morrison",
+    "Boucher",
+    "Reid",
+    "Caron",
+    "Kennedy",
+    "Beaulieu",
+    "Hamilton",
+    "Cloutier",
+    "Scott",
+    "Dube",
+    "Grant",
+    "Poirier",
+    "Ferguson",
+    "Fournier",
+    "Bell",
+    "Lapointe",
+    "Clarke",
+    "Leclerc",
+    "Doucet",
+    "Hebert",
+    "Sinclair",
+    "Lefebvre",
+    "Cameron",
+    "Gaudreault",
+    "Mercier",
+    "MacKay",
+    "Theriault",
 ];
 
 /// Spawn a platoon around `leader` (the player's entity), which becomes the
@@ -88,26 +163,26 @@ pub fn spawn_platoon(world: &mut World, leader: Entity, origin: [f32; 3], yaw: f
     let mut ids = *world.get_resource_or_insert_with(NextIds::default);
     let mut names = shuffled_names(world);
 
-    let platoon = world
-        .spawn((
-            Unit {
-                id: next(&mut ids.unit),
-                kind: UnitKind::Platoon,
-                name: "1 Platoon".into(),
-                callsign: "11".into(),
-            },
-            Members::default(),
-            Leader(Some(leader)),
-            CurrentOrder::default(),
-        ))
-        .id();
+    let mut bundle = UnitBundle::new(next(&mut ids.unit), UnitKind::Platoon, "1 Platoon", "11");
+    bundle.leader = Leader(Some(leader));
+    let platoon = world.spawn(bundle).id();
 
     let mut squads = Vec::new();
 
     // Platoon headquarters (around the commander).
     let hq = spawn_squad(
-        world, &mut ids, &mut names, platoon, UnitKind::PlatoonHeadquarters, "Platoon HQ", "11",
-        &PLATOON_HQ, origin, (0.0, 0.0), yaw, Some(leader),
+        world,
+        &mut ids,
+        &mut names,
+        platoon,
+        UnitKind::PlatoonHeadquarters,
+        "Platoon HQ",
+        "11",
+        &PLATOON_HQ,
+        origin,
+        (0.0, 0.0),
+        yaw,
+        Some(leader),
     );
     squads.push(hq);
 
@@ -116,8 +191,18 @@ pub fn spawn_platoon(world: &mut World, leader: Entity, origin: [f32; 3], yaw: f
         let name = format!("{} Section", i + 1);
         let callsign = format!("11{}", (b'A' + i as u8) as char);
         squads.push(spawn_squad(
-            world, &mut ids, &mut names, platoon, UnitKind::RifleSection, &name, &callsign,
-            &RIFLE_SECTION, origin, *anchor, yaw, None,
+            world,
+            &mut ids,
+            &mut names,
+            platoon,
+            UnitKind::RifleSection,
+            &name,
+            &callsign,
+            &RIFLE_SECTION,
+            origin,
+            *anchor,
+            yaw,
+            None,
         ));
     }
 
@@ -143,56 +228,45 @@ fn spawn_squad(
 ) -> Entity {
     let squad = world
         .spawn((
-            Unit { id: next(&mut ids.unit), kind, name: name.into(), callsign: callsign.into() },
-            Members::default(),
-            Leader(None),
+            UnitBundle::new(next(&mut ids.unit), kind, name, callsign),
             ParentUnit(platoon),
-            CurrentOrder::default(),
         ))
         .id();
 
     let mut members = Vec::new();
     for (i, s) in template.iter().enumerate() {
-        let (right, fwd) = (anchor.0 + s.offset.0, anchor.1 + s.offset.1);
-        let position = place(origin, yaw, right, fwd);
-        let soldier = Soldier {
-            id: next(&mut ids.soldier),
-            name: names.pop().unwrap_or("Smith").to_string(),
-            rank: s.rank,
-            role: s.role,
-        };
-        let member = SquadMember { squad, fire_team: s.team, slot: i as u8 };
+        let position = place(origin, yaw, anchor.0 + s.offset.0, anchor.1 + s.offset.1);
+        let bundle = SoldierBundle::new(
+            Soldier {
+                id: next(&mut ids.soldier),
+                name: names.pop().unwrap_or("Smith").to_string(),
+                rank: s.rank,
+                role: s.role,
+            },
+            SquadMember {
+                squad,
+                fire_team: s.team,
+                slot: i as u8,
+            },
+            FormationSlot {
+                right: s.offset.0,
+                forward: s.offset.1,
+            },
+        );
+        let loadout = Loadout::basic(s.role);
 
-        // The player's entity already exists: give it soldier components but
-        // keep its client-reported transform.
+        // The player's entity already exists: make it a soldier but keep its
+        // client-reported body.
         let e = match (i, existing_leader) {
             (0, Some(player)) => {
-                world.entity_mut(player).insert((soldier, member));
+                make_soldier(world, player, bundle, &loadout);
                 player
             }
-            _ => world
-                .spawn((
-                    soldier,
-                    member,
-                    Transform { position, yaw },
-                    Velocity::default(),
-                    Stance::default(),
-                    Gait::default(),
-                ))
-                .id(),
+            _ => spawn_soldier(world, bundle, Transform { position, yaw }, &loadout),
         };
-        world.entity_mut(e).insert((
-            Health::default(),
-            LifeState::Healthy,
-            FormationSlot { right: s.offset.0, forward: s.offset.1 },
-            MoveGoal::default(),
-            Activity::default(),
-            FireControl::default(),
-        ));
         if s.rank.is_officer() && matches!(s.role, Role::PlatoonCommander) {
             world.entity_mut(e).insert(CommissionedOfficer);
         }
-        give_loadout(world, e, s.role);
         members.push(e);
     }
 
@@ -201,46 +275,11 @@ fn spawn_squad(
     squad
 }
 
-/// Basic load: rifle with a full magazine + 6 spares (210 rounds), two frags,
-/// a smoke, a field dressing. Medical assistants carry extra dressings.
-fn give_loadout(world: &mut World, soldier: Entity, role: Role) {
-    let spec = M16A2;
-    let weapon = world
-        .spawn((
-            WeaponState {
-                weapon_id: spec.id.to_string(),
-                magazine_capacity: spec.magazine_capacity,
-                magazine: Some(spec.magazine_capacity),
-            },
-            Holder(Some(soldier)),
-        ))
-        .id();
-    let inv = Inventory {
-        primary: Some(weapon),
-        magazines: vec![spec.magazine_capacity; 6],
-        loose_rounds: 0,
-        frag_grenades: 2,
-        smoke_grenades: if matches!(role, Role::SectionCommander | Role::PlatoonWarrant) { 2 } else { 1 },
-        field_dressings: if matches!(role, Role::MedicalAssistant) { 12 } else { 1 },
-    };
-    world.entity_mut(soldier).insert(inv);
-}
-
-/// World position for a formation offset. Uses the client's axes: +Y up,
-/// facing `yaw` (radians), where yaw 0 looks down -Z.
-pub fn place(origin: [f32; 3], yaw: f32, right: f32, forward: f32) -> [f32; 3] {
-    let (s, c) = yaw.sin_cos();
-    let fwd = (-s, -c);
-    let rgt = (c, -s);
-    [origin[0] + rgt.0 * right + fwd.0 * forward, origin[1], origin[2] + rgt.1 * right + fwd.1 * forward]
-}
-
 fn next(counter: &mut u32) -> u32 {
     let v = *counter;
     *counter += 1;
     v
 }
-
 
 fn shuffled_names(world: &mut World) -> Vec<&'static str> {
     let mut names: Vec<&'static str> = SURNAMES.to_vec();

@@ -1,6 +1,7 @@
-//! Per-tick gameplay systems.
+//! Systems that watch the player-controlled soldier.
 
-use bevy_ecs::prelude::*;
+use bevy_ecs::query::With;
+use bevy_ecs::system::{Local, Query, Res, ResMut};
 
 use crate::components::{Gait, PlayerControlled, Stance, Velocity};
 use crate::events::{SimEvent, SimEvents};
@@ -14,7 +15,9 @@ pub fn watch_player_movement(
     mut last: Local<Option<(Stance, Gait)>>,
     mut events: ResMut<SimEvents>,
 ) {
-    let Ok((&stance, &gait, vel)) = q.single() else { return };
+    let Ok((&stance, &gait, vel)) = q.single() else {
+        return;
+    };
     if *last != Some((stance, gait)) {
         // Skip the very first tick: the default state isn't a "change".
         if last.is_some() {

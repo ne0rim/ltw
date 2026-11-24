@@ -1,25 +1,6 @@
-//! Basic ECS components shared across systems.
+//! Posture and movement state: stance, gait, and where a soldier is walking to.
 
-use bevy_ecs::prelude::*;
-
-/// World-space position (metres) and facing (yaw, radians around +Y).
-#[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
-pub struct Transform {
-    pub position: [f32; 3],
-    pub yaw: f32,
-}
-
-/// World-space velocity in metres per second.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
-pub struct Velocity(pub [f32; 3]);
-
-impl Velocity {
-    /// Speed across the ground, ignoring vertical motion.
-    pub fn horizontal_speed(&self) -> f32 {
-        let [x, _, z] = self.0;
-        (x * x + z * z).sqrt()
-    }
-}
+use bevy_ecs::component::Component;
 
 /// Body posture. Affects speed, profile (how visible or hittable) and accuracy.
 /// The numbers must match `Player.Stance` in the Godot client.
@@ -83,18 +64,6 @@ impl Gait {
     }
 }
 
-/// Marks the entity the player is currently controlling.
-///
-/// Its movement belongs to the client: Godot moves the player and reports the
-/// result. The sim reads it (for orders, perception, AI) but never moves it.
-#[derive(Component, Debug, Clone, Copy, Default)]
-pub struct PlayerControlled;
-
-/// Everything the client reports about the player in one update.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct PlayerReport {
-    pub transform: Transform,
-    pub velocity: Velocity,
-    pub stance: Stance,
-    pub gait: Gait,
-}
+/// Where the soldier is walking to (None = not moving).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
+pub struct MoveGoal(pub Option<[f32; 3]>);

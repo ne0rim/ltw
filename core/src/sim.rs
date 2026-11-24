@@ -7,15 +7,22 @@
 
 use std::collections::HashMap;
 
-use bevy_ecs::prelude::*;
+use bevy_ecs::entity::Entity;
+use bevy_ecs::query::{Has, Without};
+use bevy_ecs::resource::Resource;
+use bevy_ecs::schedule::{IntoScheduleConfigs, Schedule};
+use bevy_ecs::world::World;
 
-use crate::components::{Gait, PlayerControlled, PlayerReport, Stance, Transform, Velocity};
+use crate::components::{
+    Activity, CommissionedOfficer, CurrentOrder, FireControl, FireTeam, Gait, Health, Inventory,
+    Leader, LifeState, Members, MoveGoal, Order, ParentUnit, PlayerControlled, PlayerReport, Rank,
+    Role, Soldier, SquadMember, Stance, Transform, Unit, UnitKind, Velocity, WeaponState,
+    swap_magazine,
+};
+use crate::entities::{platoon, player};
 use crate::events::{SimEvent, SimEvents};
-use crate::orders::{self, CurrentOrder, Order, PendingOrders};
-use crate::org;
 use crate::rng::SimRng;
-use crate::soldier::*;
-use crate::systems;
+use crate::systems::{self, orders::PendingOrders};
 
 /// Default values for the ticker. Change these to change the starting
 /// behaviour everywhere. At runtime, edit [`SimConfig`] instead.
@@ -91,23 +98,15 @@ impl Sim {
         world.init_resource::<SimEvents>();
         world.init_resource::<SimRng>();
         world.init_resource::<PendingOrders>();
-        let player = world
-            .spawn((
-                PlayerControlled,
-                Transform::default(),
-                Velocity::default(),
-                Stance::default(),
-                Gait::default(),
-            ))
-            .id();
+        let player = player::spawn_player(&mut world);
         let mut schedule = Schedule::default();
         schedule.add_systems(
             (
-                orders::apply_orders,
-                orders::move_soldiers,
-                orders::fire_control,
-                orders::report_in_position,
-                systems::watch_player_movement,
+                systems::orders::apply_orders,
+                systems::orders::move_soldiers,
+                systems::orders::fire_control,
+                systems::orders::report_in_position,
+                systems::player::watch_player_movement,
             )
                 .chain(),
         );
@@ -123,7 +122,9 @@ impl Sim {
 
     /// Advance by `real_delta` seconds of wall time. Returns how many ticks ran.
     pub fn update(&mut self, real_delta: f64) -> u32 {
-        let Some(tick_seconds) = self.config.tick_seconds() else { return 0 };
+        let Some(tick_seconds) = self.config.tick_seconds() else {
+            return 0;
+        };
         if self.config.paused || !real_delta.is_finite() || real_delta <= 0.0 {
             return 0;
         }
@@ -152,7 +153,9 @@ impl Sim {
 
     /// How far we are into the next tick (0..1), for interpolating visuals.
     pub fn alpha(&self) -> f64 {
-        self.config.tick_seconds().map_or(0.0, |t| (self.accumulator / t).clamp(0.0, 1.0))
+        self.config
+            .tick_seconds()
+            .map_or(0.0, |t| (self.accumulator / t).clamp(0.0, 1.0))
     }
 
     /// Client reports the player's current movement state. Only the newest
@@ -187,63 +190,97 @@ impl Sim {
     /// Create a platoon (platoon HQ of 6 + 3 rifle sections of 10)
     /// around the player, who becomes its platoon commander. Returns the platoon's unit id.
     pub fn spawn_platoon(&mut self, origin: [f32; 3], yaw: f32) -> u32 {
-        let platoon = org::spawn_platoon(&mut self.world, self.player, origin, yaw);
-        let unit_id = self.world.get::<Unit>(platoon).expect("platoon has Unit").id;
-        let squads = self.world.get::<Members>(platoon).expect("platoon has Members").0.clone();
+        let platoon = platoon::spawn_platoon(&mut self.world, self.player, origin, yaw);
+        let unit_id = self
+            .world
+            .get::<Unit>(platoon)
+            .expect("platoon has Unit")
+            .id;
+        let squads = self
+            .world
+            .get::<Members>(platoon)
+            .expect("platoon has Members")
+            .0
+            .clone();
         let soldiers = squads
             .iter()
             .map(|sq| self.world.get::<Members>(*sq).map_or(0, |m| m.0.len()))
             .sum::<usize>() as u32;
-        self.world.resource_mut::<SimEvents>().push(SimEvent::PlatoonSpawned { unit_id, soldiers });
+        self.world
+            .resource_mut::<SimEvents>()
+            .push(SimEvent::PlatoonSpawned { unit_id, soldiers });
         unit_id
     }
 
     /// Snapshot of every soldier, sorted by id.
     pub fn soldiers(&mut self) -> Vec<SoldierInfo> {
         let mut q = self.world.query::<(
-            &Soldier, &SquadMember, &Transform, &Stance, &Health, &LifeState, &Inventory,
-            Has<CommissionedOfficer>, Has<PlayerControlled>, Option<&Activity>, Option<&FireControl>,
+            &Soldier,
+            &SquadMember,
+            &Transform,
+            &Stance,
+            &Health,
+            &LifeState,
+            &Inventory,
+            Has<CommissionedOfficer>,
+            Has<PlayerControlled>,
+            Option<&Activity>,
+            Option<&FireControl>,
         )>();
         let rows: Vec<_> = q
             .iter(&self.world)
             .map(|(s, m, t, st, h, l, inv, off, pl, act, fc)| {
-                (s.clone(), *m, *t, *st, *h, *l, inv.clone(), off, pl, act.copied(), fc.copied())
+                (
+                    s.clone(),
+                    *m,
+                    *t,
+                    *st,
+                    *h,
+                    *l,
+                    inv.clone(),
+                    off,
+                    pl,
+                    act.copied(),
+                    fc.copied(),
+                )
             })
             .collect();
         let mut out: Vec<SoldierInfo> = rows
             .into_iter()
-            .map(|(s, m, t, stance, h, life, inv, is_officer, is_player, act, fc)| {
-                let unit = self.world.get::<Unit>(m.squad);
-                let weapon = inv.primary.and_then(|w| self.world.get::<WeaponState>(w));
-                SoldierInfo {
-                    id: s.id,
-                    name: s.name,
-                    rank: s.rank,
-                    role: s.role,
-                    unit_id: unit.map_or(0, |u| u.id),
-                    unit_name: unit.map_or_else(String::new, |u| u.name.clone()),
-                    fire_team: m.fire_team,
-                    slot: m.slot,
-                    is_player,
-                    is_officer,
-                    position: t.position,
-                    yaw: t.yaw,
-                    stance,
-                    health: h.current,
-                    max_health: h.max,
-                    life,
-                    weapon_id: weapon.map_or_else(String::new, |w| w.weapon_id.clone()),
-                    rounds_in_weapon: weapon.and_then(|w| w.magazine).unwrap_or(0),
-                    magazines: inv.magazines.clone(),
-                    reserve_rounds: inv.reserve_rounds(),
-                    frag_grenades: inv.frag_grenades,
-                    smoke_grenades: inv.smoke_grenades,
-                    field_dressings: inv.field_dressings,
-                    activity: act.unwrap_or_default(),
-                    fire_target: fc.and_then(|f| f.target),
-                    out_of_ammo: fc.is_some_and(|f| f.out_of_ammo),
-                }
-            })
+            .map(
+                |(s, m, t, stance, h, life, inv, is_officer, is_player, act, fc)| {
+                    let unit = self.world.get::<Unit>(m.squad);
+                    let weapon = inv.primary.and_then(|w| self.world.get::<WeaponState>(w));
+                    SoldierInfo {
+                        id: s.id,
+                        name: s.name,
+                        rank: s.rank,
+                        role: s.role,
+                        unit_id: unit.map_or(0, |u| u.id),
+                        unit_name: unit.map_or_else(String::new, |u| u.name.clone()),
+                        fire_team: m.fire_team,
+                        slot: m.slot,
+                        is_player,
+                        is_officer,
+                        position: t.position,
+                        yaw: t.yaw,
+                        stance,
+                        health: h.current,
+                        max_health: h.max,
+                        life,
+                        weapon_id: weapon.map_or_else(String::new, |w| w.weapon_id.clone()),
+                        rounds_in_weapon: weapon.and_then(|w| w.magazine).unwrap_or(0),
+                        magazines: inv.magazines.clone(),
+                        reserve_rounds: inv.reserve_rounds(),
+                        frag_grenades: inv.frag_grenades,
+                        smoke_grenades: inv.smoke_grenades,
+                        field_dressings: inv.field_dressings,
+                        activity: act.unwrap_or_default(),
+                        fire_target: fc.and_then(|f| f.target),
+                        out_of_ammo: fc.is_some_and(|f| f.out_of_ammo),
+                    }
+                },
+            )
             .collect();
         out.sort_by_key(|s| s.id);
         out
@@ -251,10 +288,24 @@ impl Sim {
 
     /// Snapshot of every unit (platoons and squads), sorted by id.
     pub fn units(&mut self) -> Vec<UnitInfo> {
-        let mut q = self.world.query::<(&Unit, &Members, &Leader, Option<&ParentUnit>, Option<&CurrentOrder>)>();
+        let mut q = self.world.query::<(
+            &Unit,
+            &Members,
+            &Leader,
+            Option<&ParentUnit>,
+            Option<&CurrentOrder>,
+        )>();
         let rows: Vec<_> = q
             .iter(&self.world)
-            .map(|(u, m, l, p, o)| (u.clone(), m.0.clone(), l.0, p.map(|p| p.0), o.copied().unwrap_or_default()))
+            .map(|(u, m, l, p, o)| {
+                (
+                    u.clone(),
+                    m.0.clone(),
+                    l.0,
+                    p.map(|p| p.0),
+                    o.copied().unwrap_or_default(),
+                )
+            })
             .collect();
         let world = &self.world;
         let soldier_id = |e: Entity| world.get::<Soldier>(e).map(|s| s.id);
@@ -282,7 +333,9 @@ impl Sim {
     /// The client knows the terrain; it tells the sim how high the ground is
     /// under an AI soldier. (Ignored for the player, whose position is reported.)
     pub fn set_soldier_height(&mut self, soldier_id: u32, y: f32) -> bool {
-        let Some(e) = self.soldier_entity(soldier_id) else { return false };
+        let Some(e) = self.soldier_entity(soldier_id) else {
+            return false;
+        };
         if e == self.player {
             return false;
         }
@@ -295,13 +348,21 @@ impl Sim {
 
     pub fn soldier_entity(&mut self, soldier_id: u32) -> Option<Entity> {
         let mut q = self.world.query::<(Entity, &Soldier)>();
-        q.iter(&self.world).find(|(_, s)| s.id == soldier_id).map(|(e, _)| e)
+        q.iter(&self.world)
+            .find(|(_, s)| s.id == soldier_id)
+            .map(|(e, _)| e)
     }
 
     /// The client fires the player's weapon; it reports how many rounds are left
     /// in the inserted magazine.
     pub fn report_player_rounds(&mut self, rounds: u32) {
-        let Some(w) = self.world.get::<Inventory>(self.player).and_then(|i| i.primary) else { return };
+        let Some(w) = self
+            .world
+            .get::<Inventory>(self.player)
+            .and_then(|i| i.primary)
+        else {
+            return;
+        };
         if let Some(mut ws) = self.world.get_mut::<WeaponState>(w) {
             if ws.magazine.is_some() {
                 ws.magazine = Some(rounds.min(ws.magazine_capacity));
@@ -328,7 +389,11 @@ impl Sim {
         let soldier_id = self.world.get::<Soldier>(soldier).map_or(0, |s| s.id);
         self.world
             .resource_mut::<SimEvents>()
-            .push(SimEvent::Reloaded { soldier_id, rounds: best, magazines_left: left });
+            .push(SimEvent::Reloaded {
+                soldier_id,
+                rounds: best,
+                magazines_left: left,
+            });
         Some(best)
     }
 
@@ -343,13 +408,18 @@ impl Sim {
 
     /// Order units to fire at `target` until given another order. Applied next tick.
     pub fn order_fire_at(&mut self, unit_ids: &[u32], target: [f32; 3]) {
-        self.world.resource_mut::<PendingOrders>().0.push((unit_ids.to_vec(), Order::FireAt { target }));
+        self.world
+            .resource_mut::<PendingOrders>()
+            .0
+            .push((unit_ids.to_vec(), Order::FireAt { target }));
     }
 
     /// Ground heights for many soldiers at once (the client knows the terrain).
     pub fn set_soldier_heights(&mut self, ids: &[u32], heights: &[f32]) {
         let by_id: HashMap<u32, f32> = ids.iter().copied().zip(heights.iter().copied()).collect();
-        let mut q = self.world.query_filtered::<(&Soldier, &mut Transform), Without<PlayerControlled>>();
+        let mut q = self
+            .world
+            .query_filtered::<(&Soldier, &mut Transform), Without<PlayerControlled>>();
         for (s, mut t) in q.iter_mut(&mut self.world) {
             if let Some(y) = by_id.get(&s.id) {
                 t.position[1] = *y;
@@ -442,25 +512,42 @@ pub struct UnitInfo {
 }
 
 fn soldier_rounds(world: &World, soldier: Entity) -> u32 {
-    let Some(inv) = world.get::<Inventory>(soldier) else { return 0 };
-    let loaded = inv.primary.and_then(|w| world.get::<WeaponState>(w)).and_then(|w| w.magazine).unwrap_or(0);
+    let Some(inv) = world.get::<Inventory>(soldier) else {
+        return 0;
+    };
+    let loaded = inv
+        .primary
+        .and_then(|w| world.get::<WeaponState>(w))
+        .and_then(|w| w.magazine)
+        .unwrap_or(0);
     loaded + inv.reserve_rounds()
 }
 
 fn unit_status(world: &World, members: &[Entity], order: Option<Order>) -> &'static str {
     // Only AI soldiers carry out orders (the player moves themselves).
-    let ai: Vec<Entity> = members.iter().copied().filter(|e| world.get::<PlayerControlled>(*e).is_none()).collect();
+    let ai: Vec<Entity> = members
+        .iter()
+        .copied()
+        .filter(|e| world.get::<PlayerControlled>(*e).is_none())
+        .collect();
     match order {
         None => "holding",
         Some(Order::MoveTo { .. }) => {
-            if ai.iter().any(|e| world.get::<MoveGoal>(*e).is_some_and(|g| g.0.is_some())) {
+            if ai
+                .iter()
+                .any(|e| world.get::<MoveGoal>(*e).is_some_and(|g| g.0.is_some()))
+            {
                 "moving"
             } else {
                 "in position"
             }
         }
         Some(Order::FireAt { .. }) => {
-            if !ai.is_empty() && ai.iter().all(|e| world.get::<FireControl>(*e).is_some_and(|f| f.out_of_ammo)) {
+            if !ai.is_empty()
+                && ai
+                    .iter()
+                    .all(|e| world.get::<FireControl>(*e).is_some_and(|f| f.out_of_ammo))
+            {
                 "out of ammo"
             } else {
                 "firing"
@@ -471,10 +558,23 @@ fn unit_status(world: &World, members: &[Entity], order: Option<Order>) -> &'sta
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use bevy_ecs::query::With;
+    use bevy_ecs::resource::Resource;
+    use bevy_ecs::system::{Query, ResMut};
+
+    use crate::components::{
+        Activity, Gait, LifeState, PlayerControlled, PlayerReport, Rank, Role, Stance, Transform,
+        UnitKind, Velocity,
+    };
+    use crate::events::SimEvent;
+
+    use super::{Sim, SimConfig};
 
     fn sim_at(hz: f64) -> Sim {
-        Sim::new(SimConfig { tick_rate_hz: hz, ..Default::default() })
+        Sim::new(SimConfig {
+            tick_rate_hz: hz,
+            ..Default::default()
+        })
     }
 
     #[test]
@@ -515,7 +615,10 @@ mod tests {
     fn player_report_applies_on_next_tick() {
         let mut sim = sim_at(10.0);
         let r = PlayerReport {
-            transform: Transform { position: [1.0, 2.0, 3.0], yaw: 0.5 },
+            transform: Transform {
+                position: [1.0, 2.0, 3.0],
+                yaw: 0.5,
+            },
             velocity: Velocity([3.0, 0.0, 4.0]),
             stance: Stance::Crouching,
             gait: Gait::Walk,
@@ -539,7 +642,10 @@ mod tests {
             },
         );
         sim.report_player(PlayerReport {
-            transform: Transform { position: [42.0, 0.0, 0.0], yaw: 0.0 },
+            transform: Transform {
+                position: [42.0, 0.0, 0.0],
+                yaw: 0.0,
+            },
             ..Default::default()
         });
         sim.update(0.1);
@@ -550,18 +656,33 @@ mod tests {
     fn movement_change_sends_event_back() {
         let mut sim = sim_at(10.0);
         sim.update(0.1);
-        assert!(sim.drain_events().is_empty(), "no event for the initial state");
+        assert!(
+            sim.drain_events().is_empty(),
+            "no event for the initial state"
+        );
 
-        sim.report_player(PlayerReport { stance: Stance::Prone, gait: Gait::Walk, ..Default::default() });
+        sim.report_player(PlayerReport {
+            stance: Stance::Prone,
+            gait: Gait::Walk,
+            ..Default::default()
+        });
         sim.update(0.1);
         let events = sim.drain_events();
         assert!(matches!(
             events.as_slice(),
-            [SimEvent::PlayerMovementChanged { stance: Stance::Prone, gait: Gait::Walk, .. }]
+            [SimEvent::PlayerMovementChanged {
+                stance: Stance::Prone,
+                gait: Gait::Walk,
+                ..
+            }]
         ));
 
         // Same state again: nothing new.
-        sim.report_player(PlayerReport { stance: Stance::Prone, gait: Gait::Walk, ..Default::default() });
+        sim.report_player(PlayerReport {
+            stance: Stance::Prone,
+            gait: Gait::Walk,
+            ..Default::default()
+        });
         sim.update(0.1);
         assert!(sim.drain_events().is_empty());
     }
@@ -573,11 +694,30 @@ mod tests {
         let units = sim.units();
         let platoon = units.iter().find(|u| u.kind == UnitKind::Platoon).unwrap();
         assert_eq!(platoon.child_unit_ids.len(), 4);
-        let squads: Vec<_> = units.iter().filter(|u| u.parent_id == Some(platoon.id)).collect();
-        assert_eq!(squads.iter().filter(|u| u.kind == UnitKind::PlatoonHeadquarters).count(), 1);
-        assert_eq!(squads.iter().filter(|u| u.kind == UnitKind::RifleSection).count(), 3);
+        let squads: Vec<_> = units
+            .iter()
+            .filter(|u| u.parent_id == Some(platoon.id))
+            .collect();
+        assert_eq!(
+            squads
+                .iter()
+                .filter(|u| u.kind == UnitKind::PlatoonHeadquarters)
+                .count(),
+            1
+        );
+        assert_eq!(
+            squads
+                .iter()
+                .filter(|u| u.kind == UnitKind::RifleSection)
+                .count(),
+            3
+        );
         for sq in &squads {
-            let expected = if sq.kind == UnitKind::PlatoonHeadquarters { 6 } else { 10 };
+            let expected = if sq.kind == UnitKind::PlatoonHeadquarters {
+                6
+            } else {
+                10
+            };
             assert_eq!(sq.soldier_ids.len(), expected, "{}", sq.name);
             assert_eq!(sq.leader_soldier_id, Some(sq.soldier_ids[0]));
         }
@@ -595,7 +735,11 @@ mod tests {
         assert_eq!(players[0].rank, Rank::Lieutenant);
         assert!(players[0].is_officer);
         assert_eq!(soldiers.iter().filter(|s| s.is_officer).count(), 1);
-        let platoon = sim.units().into_iter().find(|u| u.kind == UnitKind::Platoon).unwrap();
+        let platoon = sim
+            .units()
+            .into_iter()
+            .find(|u| u.kind == UnitKind::Platoon)
+            .unwrap();
         assert_eq!(platoon.leader_soldier_id, Some(players[0].id));
     }
 
@@ -619,11 +763,17 @@ mod tests {
         sim.spawn_platoon([100.0, 5.0, 50.0], 0.0);
         let soldiers = sim.soldiers();
         // yaw 0 looks down -Z, so the rifle squads (ahead) have smaller z.
-        let ahead = soldiers.iter().filter(|s| s.unit_name.contains("Section")).all(|s| s.position[2] < 50.0);
+        let ahead = soldiers
+            .iter()
+            .filter(|s| s.unit_name.contains("Section"))
+            .all(|s| s.position[2] < 50.0);
         assert!(ahead);
         let mut seen = std::collections::HashSet::new();
         for s in soldiers.iter().filter(|s| !s.is_player) {
-            assert!(seen.insert(((s.position[0] * 10.0) as i32, (s.position[2] * 10.0) as i32)), "two soldiers share a spot");
+            assert!(
+                seen.insert(((s.position[0] * 10.0) as i32, (s.position[2] * 10.0) as i32)),
+                "two soldiers share a spot"
+            );
         }
     }
 
@@ -654,19 +804,41 @@ mod tests {
         let me = soldiers.iter().find(|s| s.is_player).unwrap().id;
         assert!(sim.set_soldier_height(ai, 12.5));
         assert!(!sim.set_soldier_height(me, 99.0));
-        assert_eq!(sim.soldiers().iter().find(|s| s.id == ai).unwrap().position[1], 12.5);
+        assert_eq!(
+            sim.soldiers().iter().find(|s| s.id == ai).unwrap().position[1],
+            12.5
+        );
     }
 
     #[test]
     fn units_use_canadian_names_and_ranks() {
         let mut sim = sim_at(10.0);
         sim.spawn_platoon([0.0, 0.0, 0.0], 0.0);
-        let names: Vec<String> = sim.units().into_iter().map(|u| format!("{} {}", u.name, u.callsign)).collect();
-        assert_eq!(names, ["1 Platoon 11", "Platoon HQ 11", "1 Section 11A", "2 Section 11B", "3 Section 11C"]);
+        let names: Vec<String> = sim
+            .units()
+            .into_iter()
+            .map(|u| format!("{} {}", u.name, u.callsign))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "1 Platoon 11",
+                "Platoon HQ 11",
+                "1 Section 11A",
+                "2 Section 11B",
+                "3 Section 11C"
+            ]
+        );
         let soldiers = sim.soldiers();
-        let sect_comds = soldiers.iter().filter(|s| s.role == Role::SectionCommander && s.rank == Rank::Sergeant);
+        let sect_comds = soldiers
+            .iter()
+            .filter(|s| s.role == Role::SectionCommander && s.rank == Rank::Sergeant);
         assert_eq!(sect_comds.count(), 3);
-        assert!(soldiers.iter().any(|s| s.role == Role::PlatoonWarrant && s.rank == Rank::WarrantOfficer));
+        assert!(
+            soldiers
+                .iter()
+                .any(|s| s.role == Role::PlatoonWarrant && s.rank == Rank::WarrantOfficer)
+        );
     }
 
     fn unit_id(sim: &mut Sim, name: &str) -> u32 {
@@ -691,13 +863,31 @@ mod tests {
         sim.order_move(&[s1], [10.0, 0.0, -100.0], 0.0);
         let events = run_seconds(&mut sim, 1.0);
         assert!(events.iter().any(|e| matches!(e, SimEvent::OrderAcknowledged { unit_id, order: "move", .. } if *unit_id == s1)));
-        assert_eq!(sim.units().iter().find(|u| u.id == s1).unwrap().status, "moving");
+        assert_eq!(
+            sim.units().iter().find(|u| u.id == s1).unwrap().status,
+            "moving"
+        );
         let events = run_seconds(&mut sim, 60.0);
-        assert!(events.iter().any(|e| matches!(e, SimEvent::UnitInPosition { unit_id, .. } if *unit_id == s1)));
-        assert_eq!(sim.units().iter().find(|u| u.id == s1).unwrap().status, "in position");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SimEvent::UnitInPosition { unit_id, .. } if *unit_id == s1))
+        );
+        assert_eq!(
+            sim.units().iter().find(|u| u.id == s1).unwrap().status,
+            "in position"
+        );
         // The section commander's slot is 2 m behind the anchor.
-        let sc = sim.soldiers().into_iter().find(|s| s.unit_id == s1 && s.slot == 0).unwrap();
-        assert!((sc.position[0] - 10.0).abs() < 0.01 && (sc.position[2] - -98.0).abs() < 0.01, "{:?}", sc.position);
+        let sc = sim
+            .soldiers()
+            .into_iter()
+            .find(|s| s.unit_id == s1 && s.slot == 0)
+            .unwrap();
+        assert!(
+            (sc.position[0] - 10.0).abs() < 0.01 && (sc.position[2] - -98.0).abs() < 0.01,
+            "{:?}",
+            sc.position
+        );
         assert_eq!(sc.activity, Activity::Idle);
     }
 
@@ -705,12 +895,25 @@ mod tests {
     fn group_move_keeps_sections_apart() {
         let mut sim = sim_at(30.0);
         sim.spawn_platoon([0.0, 0.0, 0.0], 0.0);
-        let ids: Vec<u32> = ["1 Section", "2 Section", "3 Section"].iter().map(|n| unit_id(&mut sim, n)).collect();
+        let ids: Vec<u32> = ["1 Section", "2 Section", "3 Section"]
+            .iter()
+            .map(|n| unit_id(&mut sim, n))
+            .collect();
         sim.order_move(&ids, [0.0, 0.0, -150.0], 0.0);
         run_seconds(&mut sim, 80.0);
-        let comds: Vec<[f32; 3]> = sim.soldiers().into_iter().filter(|s| s.role == Role::SectionCommander).map(|s| s.position).collect();
+        let comds: Vec<[f32; 3]> = sim
+            .soldiers()
+            .into_iter()
+            .filter(|s| s.role == Role::SectionCommander)
+            .map(|s| s.position)
+            .collect();
         // Started 35 m apart left/centre/right; still roughly 35 m apart.
-        assert!((comds[0][0] - -35.0).abs() < 2.0 && comds[1][0].abs() < 2.0 && (comds[2][0] - 35.0).abs() < 2.0, "{comds:?}");
+        assert!(
+            (comds[0][0] - -35.0).abs() < 2.0
+                && comds[1][0].abs() < 2.0
+                && (comds[2][0] - 35.0).abs() < 2.0,
+            "{comds:?}"
+        );
     }
 
     #[test]
@@ -732,12 +935,30 @@ mod tests {
         let before = sim.units().iter().find(|u| u.id == s2).unwrap().rounds;
         sim.order_fire_at(&[s2], [0.0, 0.0, -200.0]);
         let events = run_seconds(&mut sim, 90.0);
-        let shots: u32 = events.iter().filter_map(|e| match e { SimEvent::ShotFired { rounds, .. } => Some(*rounds), _ => None }).sum();
+        let shots: u32 = events
+            .iter()
+            .filter_map(|e| match e {
+                SimEvent::ShotFired { rounds, .. } => Some(*rounds),
+                _ => None,
+            })
+            .sum();
         let after = sim.units().iter().find(|u| u.id == s2).unwrap().rounds;
         assert!(shots > 100, "only {shots} rounds fired");
-        assert_eq!(before - after, shots, "rounds fired must come out of inventories");
-        assert!(events.iter().any(|e| matches!(e, SimEvent::Reloaded { .. })), "nobody reloaded");
-        assert_eq!(sim.units().iter().find(|u| u.id == s2).unwrap().status, "firing");
+        assert_eq!(
+            before - after,
+            shots,
+            "rounds fired must come out of inventories"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SimEvent::Reloaded { .. })),
+            "nobody reloaded"
+        );
+        assert_eq!(
+            sim.units().iter().find(|u| u.id == s2).unwrap().status,
+            "firing"
+        );
         // Everyone faces the target (yaw 0 = looking down -Z).
         for s in sim.soldiers().into_iter().filter(|s| s.unit_id == s2) {
             assert!(s.yaw.abs() < 0.4, "{} faces {}", s.name, s.yaw);
@@ -751,7 +972,11 @@ mod tests {
         let s3 = unit_id(&mut sim, "3 Section");
         sim.order_fire_at(&[s3], [0.0, 0.0, -100.0]);
         let events = run_seconds(&mut sim, 900.0);
-        assert!(events.iter().any(|e| matches!(e, SimEvent::OutOfAmmo { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SimEvent::OutOfAmmo { .. }))
+        );
         let u = sim.units().into_iter().find(|u| u.id == s3).unwrap();
         assert_eq!((u.rounds, u.status), (0, "out of ammo"));
     }
@@ -765,9 +990,16 @@ mod tests {
         run_seconds(&mut sim, 5.0);
         sim.order_move(&[s1], [0.0, 0.0, 40.0], std::f32::consts::PI);
         let events = run_seconds(&mut sim, 40.0);
-        let late_shots = events.iter().skip(5).filter(|e| matches!(e, SimEvent::ShotFired { .. })).count();
+        let late_shots = events
+            .iter()
+            .skip(5)
+            .filter(|e| matches!(e, SimEvent::ShotFired { .. }))
+            .count();
         assert_eq!(late_shots, 0);
-        assert_eq!(sim.units().iter().find(|u| u.id == s1).unwrap().status, "in position");
+        assert_eq!(
+            sim.units().iter().find(|u| u.id == s1).unwrap().status,
+            "in position"
+        );
     }
 
     #[test]
@@ -782,7 +1014,8 @@ mod tests {
         struct Count(u32);
         let mut sim = sim_at(10.0);
         sim.world_mut().init_resource::<Count>();
-        sim.schedule_mut().add_systems(|mut c: ResMut<Count>| c.0 += 1);
+        sim.schedule_mut()
+            .add_systems(|mut c: ResMut<Count>| c.0 += 1);
         sim.update(0.5);
         assert_eq!(sim.world().resource::<Count>().0, 5);
     }

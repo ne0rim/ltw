@@ -1,6 +1,6 @@
 //! Seeded random numbers for the sim, so runs are reproducible.
 
-use bevy_ecs::prelude::*;
+use bevy_ecs::resource::Resource;
 
 /// SplitMix64: tiny, fast, good enough for gameplay randomness.
 #[derive(Resource, Debug, Clone)]

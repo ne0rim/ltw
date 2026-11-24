@@ -1,4 +1,4 @@
-//! Orders to units, and the per-tick systems that carry them out.
+//! Systems that carry out unit orders each tick.
 //!
 //! The client queues orders (`Sim::order_move`, `Sim::order_fire_at`); they
 //! are applied at the start of the next tick so every system sees the same
@@ -8,14 +8,19 @@
 
 use std::collections::HashMap;
 
-use bevy_ecs::prelude::*;
+use bevy_ecs::entity::Entity;
+use bevy_ecs::query::Without;
+use bevy_ecs::resource::Resource;
+use bevy_ecs::system::{Query, Res, ResMut};
 
-use crate::components::{Gait, PlayerControlled, Transform, Velocity};
+use crate::components::{
+    Activity, CurrentOrder, FireControl, FormationSlot, Gait, Inventory, Members, MoveGoal, Order,
+    PlayerControlled, Role, Soldier, SquadMember, Transform, Unit, UnitKind, Velocity, WeaponState,
+    place, swap_magazine, yaw_towards,
+};
 use crate::events::{SimEvent, SimEvents};
-use crate::org::place;
 use crate::rng::SimRng;
 use crate::sim::SimClock;
-use crate::soldier::*;
 
 /// Tuning values for orders. They'll move into data files later.
 pub mod tuning {
@@ -35,43 +40,9 @@ pub mod tuning {
     pub const SPREAD_PER_METRE: f32 = 0.03;
 }
 
-// ------------------------------------------------------------------ data
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Order {
-    /// Walk to `target` and form up facing `facing` (yaw, radians).
-    MoveTo { target: [f32; 3], facing: f32 },
-    /// Stay put and fire at `target` until given another order.
-    FireAt { target: [f32; 3] },
-}
-
-impl Order {
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::MoveTo { .. } => "move",
-            Self::FireAt { .. } => "fire",
-        }
-    }
-    pub fn target(&self) -> [f32; 3] {
-        match *self {
-            Self::MoveTo { target, .. } | Self::FireAt { target } => target,
-        }
-    }
-}
-
-/// The order a unit is carrying out (on platoon/section entities).
-#[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
-pub struct CurrentOrder {
-    pub order: Option<Order>,
-    /// Set once the unit has reported "in position" for its current move.
-    pub arrived_reported: bool,
-}
-
 /// Orders from the client waiting for the next tick: (unit ids, order).
 #[derive(Resource, Debug, Default)]
 pub struct PendingOrders(pub Vec<(Vec<u32>, Order)>);
-
-// ------------------------------------------------------------------ systems
 
 /// Turn queued orders into per-soldier goals, and acknowledge them.
 pub fn apply_orders(
@@ -80,7 +51,13 @@ pub fn apply_orders(
     mut events: ResMut<SimEvents>,
     mut units: Query<(Entity, &Unit, &Members, &mut CurrentOrder)>,
     mut soldiers: Query<
-        (&Transform, &FormationSlot, &mut MoveGoal, &mut Activity, &mut FireControl),
+        (
+            &Transform,
+            &FormationSlot,
+            &mut MoveGoal,
+            &mut Activity,
+            &mut FireControl,
+        ),
         Without<PlayerControlled>,
     >,
 ) {
@@ -103,11 +80,16 @@ pub fn apply_orders(
                 .collect();
             (!pts.is_empty()).then(|| {
                 let n = pts.len() as f32;
-                [pts.iter().map(|p| p[0]).sum::<f32>() / n, pts.iter().map(|p| p[1]).sum::<f32>() / n]
+                [
+                    pts.iter().map(|p| p[0]).sum::<f32>() / n,
+                    pts.iter().map(|p| p[1]).sum::<f32>() / n,
+                ]
             })
         };
-        let unit_centres: HashMap<Entity, [f32; 2]> =
-            picked.iter().filter_map(|(e, _, _, m)| centroid(m).map(|c| (*e, c))).collect();
+        let unit_centres: HashMap<Entity, [f32; 2]> = picked
+            .iter()
+            .filter_map(|(e, _, _, m)| centroid(m).map(|c| (*e, c)))
+            .collect();
         let n = unit_centres.len().max(1) as f32;
         let group = [
             unit_centres.values().map(|c| c[0]).sum::<f32>() / n,
@@ -118,7 +100,11 @@ pub fn apply_orders(
             match order {
                 Order::MoveTo { target, facing } => {
                     let c = unit_centres.get(unit_e).copied().unwrap_or(group);
-                    let anchor = [target[0] + (c[0] - group[0]), target[1], target[2] + (c[1] - group[1])];
+                    let anchor = [
+                        target[0] + (c[0] - group[0]),
+                        target[1],
+                        target[2] + (c[1] - group[1]),
+                    ];
                     for m in members {
                         if let Ok((_, slot, mut goal, mut act, mut fc)) = soldiers.get_mut(*m) {
                             goal.0 = Some(place(anchor, facing, slot.right, slot.forward));
@@ -157,7 +143,14 @@ pub fn move_soldiers(
     clock: Res<SimClock>,
     orders: Query<&CurrentOrder>,
     mut q: Query<
-        (&SquadMember, &mut Transform, &mut Velocity, &mut Gait, &mut Activity, &mut MoveGoal),
+        (
+            &SquadMember,
+            &mut Transform,
+            &mut Velocity,
+            &mut Gait,
+            &mut Activity,
+            &mut MoveGoal,
+        ),
         Without<PlayerControlled>,
     >,
 ) {
@@ -170,7 +163,11 @@ pub fn move_soldiers(
         if dist <= tuning::ARRIVE_DISTANCE {
             t.position[0] = g[0];
             t.position[2] = g[2];
-            if let Ok(CurrentOrder { order: Some(Order::MoveTo { facing, .. }), .. }) = orders.get(member.squad) {
+            if let Ok(CurrentOrder {
+                order: Some(Order::MoveTo { facing, .. }),
+                ..
+            }) = orders.get(member.squad)
+            {
                 t.yaw = *facing;
             }
             goal.0 = None;
@@ -197,7 +194,13 @@ pub fn fire_control(
     mut rng: ResMut<SimRng>,
     mut events: ResMut<SimEvents>,
     mut shooters: Query<
-        (&Soldier, &mut Transform, &mut FireControl, &mut Activity, &mut Inventory),
+        (
+            &Soldier,
+            &mut Transform,
+            &mut FireControl,
+            &mut Activity,
+            &mut Inventory,
+        ),
         Without<PlayerControlled>,
     >,
     mut weapons: Query<&mut WeaponState>,
@@ -215,8 +218,12 @@ pub fn fire_control(
             *act = Activity::Idle;
             continue;
         }
-        let Some(weapon_e) = inv.primary else { continue };
-        let Ok(mut weapon) = weapons.get_mut(weapon_e) else { continue };
+        let Some(weapon_e) = inv.primary else {
+            continue;
+        };
+        let Ok(mut weapon) = weapons.get_mut(weapon_e) else {
+            continue;
+        };
 
         // Changing magazines.
         if fc.reload_left > 0.0 {
@@ -247,7 +254,9 @@ pub fn fire_control(
             } else {
                 fc.out_of_ammo = true;
                 *act = Activity::Idle;
-                events.push(SimEvent::OutOfAmmo { soldier_id: soldier.id });
+                events.push(SimEvent::OutOfAmmo {
+                    soldier_id: soldier.id,
+                });
             }
             continue;
         }
@@ -256,10 +265,21 @@ pub fn fire_control(
         let shots = if gunner { tuning::GUNNER_BURST } else { 1 }.min(rounds);
         weapon.magazine = Some(rounds - shots);
         let spread = tuning::SPREAD_BASE + tuning::SPREAD_PER_METRE * range;
-        let (r, a) = (rng.unit().sqrt() * spread, rng.unit() * std::f32::consts::TAU);
+        let (r, a) = (
+            rng.unit().sqrt() * spread,
+            rng.unit() * std::f32::consts::TAU,
+        );
         let impact = [target[0] + r * a.cos(), target[1], target[2] + r * a.sin()];
-        events.push(SimEvent::ShotFired { soldier_id: soldier.id, target: impact, rounds: shots });
-        let (lo, hi) = if gunner { tuning::GUNNER_INTERVAL } else { tuning::RIFLE_INTERVAL };
+        events.push(SimEvent::ShotFired {
+            soldier_id: soldier.id,
+            target: impact,
+            rounds: shots,
+        });
+        let (lo, hi) = if gunner {
+            tuning::GUNNER_INTERVAL
+        } else {
+            tuning::RIFLE_INTERVAL
+        };
         fc.cooldown = lo + (hi - lo) * rng.unit();
         *act = Activity::Firing;
     }
@@ -275,15 +295,16 @@ pub fn report_in_position(
         if current.arrived_reported || !matches!(current.order, Some(Order::MoveTo { .. })) {
             continue;
         }
-        let still_moving = members.0.iter().any(|m| goals.get(*m).is_ok_and(|g| g.0.is_some()));
+        let still_moving = members
+            .0
+            .iter()
+            .any(|m| goals.get(*m).is_ok_and(|g| g.0.is_some()));
         if !still_moving {
             current.arrived_reported = true;
-            events.push(SimEvent::UnitInPosition { unit_id: unit.id, callsign: unit.callsign.clone() });
+            events.push(SimEvent::UnitInPosition {
+                unit_id: unit.id,
+                callsign: unit.callsign.clone(),
+            });
         }
     }
-}
-
-/// Client yaw convention: yaw 0 looks down -Z.
-pub fn yaw_towards(dir_x: f32, dir_z: f32) -> f32 {
-    (-dir_x).atan2(-dir_z)
 }

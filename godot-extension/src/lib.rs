@@ -1,6 +1,6 @@
 //! Rust ↔ Godot bridge for Lead the Way.
 
-use godot::prelude::*;
+use godot::init::{ExtensionLibrary, gdextension};
 
 mod sim_bridge;
 
