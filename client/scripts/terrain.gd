@@ -38,6 +38,25 @@ extends Node3D
 @export var grid_spacing_m: float = 10.0:
 	set(v): grid_spacing_m = maxf(v, 0.0); _update_material()
 
+@export_group("Map terrain")
+## Side of a terrain chunk (m).
+@export var chunk_m: float = 64.0
+## Chunks are drawn using every n-th height sample (4 at 0.5 m = 2 m detail).
+@export var far_step: int = 4
+## Chunks this close to the player are drawn at full detail (m)...
+@export var detail_radius_m: float = 160.0
+## ...and go back to coarse once this much further away (m).
+@export var detail_keep_margin_m: float = 40.0
+## Check again after the player has moved this far (m).
+@export var detail_recheck_m: float = 10.0
+## How far the edge skirts hang down to hide seams between chunks (m).
+@export var skirt_m: float = 1.5
+## In the editor, chunks use every n-th sample (2 at 0.5 m = 1 m detail).
+@export var editor_step: int = 2
+## Map to show in the editor; empty = the scene's (Main's) `map_id`.
+@export var preview_map_id: String = ""
+@export_tool_button("Reload map") var _reload_map_button := reload_editor_map
+
 @export_tool_button("Regenerate") var _regen_button := generate
 
 var _heights := PackedFloat32Array()
@@ -47,10 +66,171 @@ var _mesh_instance: MeshInstance3D
 var _shape_node: CollisionShape3D
 var _material: ShaderMaterial
 var _regen_queued := false
+# Chunked terrain from the map (see load_map).
+var _source: Object  # SimBridge in the game, MapFile in the editor
+var _focus: Node3D
+var _lo := 0.0
+var _hi := 1.0
+var _chunk_cells := 128
+var _chunks_per_side := 0
+var _far := {}   # Vector2i -> MeshInstance3D (coarse, every chunk)
+var _near := {}  # Vector2i -> MeshInstance3D (full detail, near the focus)
+var _detail_checked_at := Vector3.INF
+## True once the terrain comes from the map (the core's data): no noise
+## generation, no regeneration when settings change.
+var _from_map := false
 
 
 func _ready() -> void:
+	# In the game, main.gd loads the map (see load_map). In the editor, show the
+	# same map from its files; the noise generator is only a fallback.
+	if Engine.is_editor_hint():
+		reload_editor_map()
+
+
+## Editor: show the map named by Main's `map_id` (or `preview_map_id`) from the
+## core's map files, through a MapFile. Falls back to the noise generator if
+## the map can't be loaded. Press "Reload map" after regenerating a map.
+func reload_editor_map() -> void:
+	var id := _editor_map_id()
+	var file := MapFile.new()
+	if id != "" and file.open(id) and load_map(file, null):
+		return
+	_from_map = false
+	_clear_chunks()
 	generate()
+
+
+## The map to preview: `preview_map_id` if set, else the scene root's
+## `map_id` (Main's), else nothing.
+func _editor_map_id() -> String:
+	if preview_map_id != "":
+		return preview_map_id
+	var root: Node = owner
+	if root == null and Engine.is_editor_hint():
+		root = get_tree().edited_scene_root
+	if root and root.get("map_id"):
+		return str(root.get("map_id"))
+	return ""
+
+
+## Show a map's terrain. `source` is the running game's SimBridge or, in the
+## editor, a MapFile (both answer get_terrain / get_terrain_chunk). The map is cut into
+## square chunks. Every chunk is drawn coarsely (every `far_step`-th sample);
+## chunks within `detail_radius_m` of `focus` (the player) are swapped for
+## full detail, and swapped back once more than `detail_radius_m +
+## detail_keep_margin_m` away. Collision is full detail everywhere.
+## Returns false if the map has no terrain.
+func load_map(source: Object, focus: Node3D) -> bool:
+	var t: Dictionary = source.get_terrain()
+	if not t.has("heights"):
+		return false
+	_from_map = true
+	_regen_queued = false
+	_source = source
+	_focus = focus
+	_samples = t.samples
+	_cell = t.cell_m
+	_heights = t.heights
+	_lo = t.min
+	_hi = t.max
+	size_m = (_samples - 1) * _cell
+	cell_size_m = _cell
+	if _mesh_instance:
+		_mesh_instance.queue_free()
+		_mesh_instance = null
+	_build_collision_from(t.collision_heights)
+	_clear_chunks()
+	_chunk_cells = maxi(1, int(round(chunk_m / _cell)))
+	_chunks_per_side = ceili(float(_samples - 1) / _chunk_cells)
+	# The editor has no player to follow: show everything a little finer.
+	var coarse_step := editor_step if Engine.is_editor_hint() else far_step
+	for cz in _chunks_per_side:
+		for cx in _chunks_per_side:
+			_far[Vector2i(cx, cz)] = _make_chunk(Vector2i(cx, cz), coarse_step)
+	_detail_checked_at = Vector3.INF
+	_update_detail()
+	return true
+
+
+## How many chunks are drawn at full detail right now (for tests and the dev
+## panel).
+func detail_chunk_count() -> int:
+	return _near.size()
+
+
+func _process(_delta: float) -> void:
+	if _focus and _focus.global_position.distance_to(_detail_checked_at) >= detail_recheck_m:
+		_update_detail()
+
+
+## Swap chunks near the focus to full detail, and far ones back to coarse.
+func _update_detail() -> void:
+	if not _focus:
+		return
+	var here := _focus.global_position
+	_detail_checked_at = here
+	for cz in _chunks_per_side:
+		for cx in _chunks_per_side:
+			var key := Vector2i(cx, cz)
+			var d := _chunk_distance(key, here)
+			if d <= detail_radius_m and not _near.has(key):
+				_near[key] = _make_chunk(key, 1)
+				_far[key].visible = false
+			elif d > detail_radius_m + detail_keep_margin_m and _near.has(key):
+				_near[key].queue_free()
+				_near.erase(key)
+				_far[key].visible = true
+
+
+## Ground distance from a point to the nearest edge of a chunk (0 inside it).
+func _chunk_distance(key: Vector2i, p: Vector3) -> float:
+	var half := size_m * 0.5
+	var size := _chunk_cells * _cell
+	var x0 := global_position.x - half + key.x * size
+	var z0 := global_position.z - half + key.y * size
+	var dx := maxf(maxf(x0 - p.x, p.x - (x0 + size)), 0.0)
+	var dz := maxf(maxf(z0 - p.z, p.z - (z0 + size)), 0.0)
+	return Vector2(dx, dz).length()
+
+
+## One chunk's mesh from the core (built in Rust), at `step` detail.
+func _make_chunk(key: Vector2i, step: int) -> MeshInstance3D:
+	var m: Dictionary = _source.get_terrain_chunk(key.x * _chunk_cells, key.y * _chunk_cells,
+		_chunk_cells, step, _lo, _hi, skirt_m)
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = m.vertices
+	arrays[Mesh.ARRAY_NORMAL] = m.normals
+	arrays[Mesh.ARRAY_COLOR] = m.colors
+	arrays[Mesh.ARRAY_INDEX] = m.indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mi := MeshInstance3D.new()
+	mi.name = "Chunk_%d_%d_%s" % [key.x, key.y, "near" if step == 1 else "far"]
+	mi.mesh = mesh
+	mi.material_override = _terrain_material()
+	add_child(mi, false, Node.INTERNAL_MODE_FRONT)
+	# Vertices are in world space; undo this node's own offset.
+	mi.global_transform = Transform3D.IDENTITY
+	return mi
+
+
+func _clear_chunks() -> void:
+	for mi in _far.values():
+		mi.queue_free()
+	for mi in _near.values():
+		mi.queue_free()
+	_far.clear()
+	_near.clear()
+
+
+func _terrain_material() -> ShaderMaterial:
+	if _material == null:
+		_material = ShaderMaterial.new()
+		_material.shader = preload("res://shaders/terrain.gdshader")
+	_material.set_shader_parameter("grid_spacing", grid_spacing_m)
+	return _material
 
 
 ## Terrain height in metres at a world-space XZ position (bilinear).
@@ -95,13 +275,15 @@ func get_cell_size() -> float:
 
 func generate() -> void:
 	_regen_queued = false
+	_from_map = false
+	_clear_chunks()
 	_build_heights()
 	_build_mesh()
 	_build_collision()
 
 
 func _queue_regen() -> void:
-	if not is_inside_tree() or _regen_queued:
+	if not is_inside_tree() or _regen_queued or _from_map:
 		return
 	_regen_queued = true
 	_regen_if_queued.call_deferred()
@@ -224,6 +406,23 @@ func _update_material() -> void:
 		_material.shader = preload("res://shaders/terrain.gdshader")
 	_material.set_shader_parameter("grid_spacing", grid_spacing_m)
 	_mesh_instance.material_override = _material
+
+
+## Collision from heights already divided by the cell size (see below).
+func _build_collision_from(scaled: PackedFloat32Array) -> void:
+	if _shape_node == null:
+		var body := StaticBody3D.new()
+		body.name = "TerrainBody"
+		add_child(body, false, Node.INTERNAL_MODE_FRONT)
+		_shape_node = CollisionShape3D.new()
+		_shape_node.name = "Shape"
+		body.add_child(_shape_node)
+	var shape := HeightMapShape3D.new()
+	shape.map_width = _samples
+	shape.map_depth = _samples
+	shape.map_data = scaled
+	_shape_node.shape = shape
+	_shape_node.scale = Vector3.ONE * _cell
 
 
 func _build_collision() -> void:

@@ -8,7 +8,7 @@ extends Node3D
 
 @export var spawn_height_offset: float = 2.0
 ## Map to start when there is no save (a file in core/data/maps/).
-@export var map_id: String = "test_area"
+@export var map_id: String = "hill"
 ## Loaded when the game starts and written when the window is closed.
 @export var save_path: String = "user://save.json"
 
@@ -17,6 +17,7 @@ extends Node3D
 @onready var _player: Player = $Player
 @onready var _view: ViewModel = $Player/Head/Camera/ViewModel
 @onready var _platoon: PlatoonView = $Platoon
+@onready var _objects: MapObjects = $MapObjects
 @onready var _camera: Camera3D = $Player/Head/Camera
 @onready var _hud: Hud = $HUD
 
@@ -27,10 +28,16 @@ func _ready() -> void:
 	_sim.sim_event.connect(_on_sim_event)
 
 	var loaded := _sim.load_game(_os_save_path())
+	if loaded and _sim.get_map().is_empty():
+		# A save from a map that no longer exists: start a new game instead.
+		# (Closing the window will save over it.)
+		push_warning("The save's map no longer exists; starting a new game on %s" % map_id)
+		_sim.reset()
+		loaded = false
 	if not loaded and not _sim.start_map(map_id):
 		push_error("Could not start map %s" % map_id)
 	var map := _sim.get_map()
-	_fit_terrain(map)
+	_build_world()
 
 	# The player's body is Godot's: put it at the map's start for their platoon,
 	# or where the save says it was.
@@ -44,6 +51,7 @@ func _ready() -> void:
 
 	# Soldiers (both sides) are built from the sim's roster.
 	_platoon.attach(_sim, _terrain)
+	_objects.reset()
 
 	# The player's magazines come from their Rust inventory.
 	_view.magazine_source = func() -> int: return _sim.player_reload()
@@ -85,12 +93,14 @@ func _set_player_dead(dead: bool) -> void:
 	_hud.show_kia(dead)
 
 
-## The terrain covers the map: same size, regenerated if it differs.
-func _fit_terrain(map: Dictionary) -> void:
-	var size: float = map.get("size_m", _terrain.size_m)
-	if not is_equal_approx(size, _terrain.size_m):
-		_terrain.size_m = size
-		_terrain.generate()
+## Terrain and objects come from the map file, through the core.
+func _build_world() -> void:
+	if not _terrain.load_map(_sim, _player):
+		_terrain.generate()  # a map without terrain: the noise test ground
+	# Objects near the player are streamed in by MapObjects; the tactical map
+	# shows the whole list.
+	_hud.tactical_map.objects = _sim.get_map_objects()
+	_hud.tactical_map.area_name = _sim.get_map().get("name", "Map")
 
 
 func _notification(what: int) -> void:

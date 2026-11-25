@@ -4,14 +4,15 @@
 //!   New      → order the move the task needs                    → Moving
 //!   Moving   → arrived (the move order cleared):
 //!                SupportByFire             → order a fire mission → Firing
-//!                Defend, Hold, Perimeter   →                      → InPosition
+//!                Defend, Hold, Perimeter,
+//!                Occupy                    →                      → InPosition
 //!                Attack, MoveTo, Withdraw  →                      → Done
 //!                Patrol                    → next waypoint        → New
 //!   Firing   → fire mission finished → fire again while anyone has ammo
 //!
 //! "The move the task needs" is a formation move (`Order::MoveTo`) for most
-//! tasks, and a perimeter (`Order::Perimeter`, everyone facing outward) for
-//! Hold and Perimeter.
+//! tasks, a perimeter (`Order::Perimeter`, everyone facing outward) for Hold
+//! and Perimeter, and a crouched line (`Order::Line`) for Occupy.
 
 use std::f32::consts::TAU;
 
@@ -86,9 +87,10 @@ pub fn command_sections(
                     issue(Order::FireAt { target });
                     u.task.set_stage(TaskStage::Firing);
                 }
-                TaskKind::Defend { .. } | TaskKind::Hold { .. } | TaskKind::Perimeter { .. } => {
-                    u.task.set_stage(TaskStage::InPosition)
-                }
+                TaskKind::Defend { .. }
+                | TaskKind::Hold { .. }
+                | TaskKind::Perimeter { .. }
+                | TaskKind::Occupy { .. } => u.task.set_stage(TaskStage::InPosition),
                 TaskKind::Attack { .. } | TaskKind::MoveTo { .. } | TaskKind::Withdraw { .. } => {
                     u.task.set_stage(TaskStage::Done)
                 }
@@ -132,6 +134,12 @@ fn move_order(kind: TaskKind, here: Option<[f32; 3]>) -> Order {
             let to = route.get(leg as usize);
             walk(to, toward(to))
         }
+        TaskKind::Occupy { from, to, facing } => Order::Line {
+            from,
+            to,
+            facing,
+            crouch: true,
+        },
         TaskKind::Hold { position } => Order::Perimeter {
             centre: position,
             radius: tuning::SECTION_HOLD_RADIUS,

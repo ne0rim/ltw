@@ -155,6 +155,7 @@ impl Sim {
                 systems::command::command_sections,
                 systems::orders::apply_orders,
                 systems::orders::move_soldiers,
+                systems::terrain::keep_on_ground,
                 systems::orders::fire_control,
                 systems::combat::resolve_shots,
                 systems::combat::recover_from_suppression,
@@ -311,7 +312,10 @@ impl Sim {
     }
 
     /// Start a map from a definition (for maps built in code, e.g. tests).
-    pub fn start_map_def(&mut self, def: MapDef) {
+    pub fn start_map_def(&mut self, mut def: MapDef) {
+        if def.index.is_none() {
+            def.prepare();
+        }
         for force in &def.forces {
             let spec = PlatoonSpec {
                 side: force.side,
@@ -326,6 +330,7 @@ impl Sim {
             }
         }
         self.world.insert_resource(ActiveMap(def));
+        systems::terrain::put_on_ground(&mut self.world);
     }
 
     /// The map being played, if one was started (or loaded).
@@ -833,7 +838,7 @@ fn unit_status(world: &World, members: &[Entity], order: Option<Order>) -> &'sta
         .collect();
     match order {
         None => "idle",
-        Some(Order::MoveTo { .. } | Order::Perimeter { .. }) => {
+        Some(Order::MoveTo { .. } | Order::Perimeter { .. } | Order::Line { .. }) => {
             if ai
                 .iter()
                 .any(|e| world.get::<MoveGoal>(*e).is_some_and(|g| g.0.is_some()))

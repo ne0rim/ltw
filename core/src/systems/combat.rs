@@ -11,6 +11,9 @@
 //! AI rounds don't hit their own side within `FRIENDLY_SAFE_DISTANCE` of the
 //! shooter (soldiers don't shoot through their mates in formation); beyond
 //! that, friendly fire is possible. The player's rounds can hit anyone.
+//!
+//! The map's ground and objects (barricades) stop rounds: a body is only hit
+//! if the round reaches it first.
 
 use std::collections::HashSet;
 
@@ -18,6 +21,8 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::query::QueryData;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Query, Res, ResMut};
+
+use crate::map::ActiveMap;
 
 use crate::ballistics::{self, Body};
 use crate::components::{
@@ -94,6 +99,7 @@ pub struct Target {
 }
 
 pub fn resolve_shots(
+    map: Option<Res<ActiveMap>>,
     mut pending: ResMut<PendingShots>,
     mut rng: ResMut<SimRng>,
     mut events: ResMut<SimEvents>,
@@ -134,7 +140,12 @@ pub fn resolve_shots(
         let (aim_dir, aim_distance) = match shot.aim {
             Aim::Direction(d) => (ballistics::normalize(d), shot.max_range),
             Aim::Point(p) => {
-                let ground = ground_near(p, &people, &killed).unwrap_or(shooter_body.feet[1]);
+                // The map's ground if it has terrain; otherwise guess from
+                // soldiers near the point.
+                let ground = match map.as_deref().filter(|m| m.0.heights.is_some()) {
+                    Some(m) => m.0.height_at(p[0], p[2]),
+                    None => ground_near(p, &people, &killed).unwrap_or(shooter_body.feet[1]),
+                };
                 let aim = [p[0], ground + tuning::AIM_HEIGHT, p[2]];
                 let v = ballistics::sub(aim, shot.origin);
                 (ballistics::normalize(v), ballistics::length(v))
@@ -143,6 +154,11 @@ pub fn resolve_shots(
         let dir = ballistics::deviate(aim_dir, shot.sigma_mrad, &mut rng);
         // Rounds carry on past a point they were aimed at.
         let reach = (aim_distance * 1.5).min(shot.max_range);
+        // The ground and objects (barricades) stop rounds.
+        let blocked = map
+            .as_deref()
+            .and_then(|m| m.0.obstruction(shot.origin, dir, reach));
+        let reach = blocked.unwrap_or(reach);
         let close_friend = |i: usize| {
             shot.spare_close_friends
                 && people[i].2 == shooter_side
@@ -155,7 +171,7 @@ pub fn resolve_shots(
         });
 
         // Where the tracer ends: the hit, or about where it was aimed.
-        let end_distance = hit.map_or(aim_distance.min(reach), |(_, t)| t);
+        let end_distance = hit.map_or(blocked.unwrap_or(aim_distance.min(reach)), |(_, t)| t);
         let impact = [
             shot.origin[0] + dir[0] * end_distance,
             shot.origin[1] + dir[1] * end_distance,

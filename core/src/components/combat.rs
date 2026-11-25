@@ -2,6 +2,8 @@
 
 use bevy_ecs::component::Component;
 
+use super::identity::Rank;
+
 /// What the soldier is doing right now (for the client and AI).
 #[derive(
     Component, Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
@@ -67,12 +69,17 @@ impl Veterancy {
     /// Starting veterancy by rank, until soldiers have their own records:
     /// privates and officers are trained, NCOs are veterans, warrant officers
     /// are elite.
-    pub fn for_rank(rank: super::Rank) -> Self {
-        use super::Rank::*;
+    pub fn for_rank(rank: Rank) -> Self {
         match rank {
-            Private | SecondLieutenant | Lieutenant | Captain | Major => Self::Trained,
-            Corporal | MasterCorporal | Sergeant => Self::Veteran,
-            WarrantOfficer | MasterWarrantOfficer | ChiefWarrantOfficer => Self::Elite,
+            Rank::Private
+            | Rank::SecondLieutenant
+            | Rank::Lieutenant
+            | Rank::Captain
+            | Rank::Major => Self::Trained,
+            Rank::Corporal | Rank::MasterCorporal | Rank::Sergeant => Self::Veteran,
+            Rank::WarrantOfficer | Rank::MasterWarrantOfficer | Rank::ChiefWarrantOfficer => {
+                Self::Elite
+            }
         }
     }
 }

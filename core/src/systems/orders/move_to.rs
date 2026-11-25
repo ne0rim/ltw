@@ -9,7 +9,7 @@ use bevy_ecs::system::{Query, Res, ResMut};
 
 use crate::components::{
     Activity, CurrentOrder, Gait, GoalFacing, LifeState, MoveGoal, Order, PlayerControlled,
-    SquadMember, Transform, Velocity, place, yaw_towards,
+    SquadMember, Stance, Transform, Velocity, place, yaw_towards,
 };
 use crate::events::{SimEvent, SimEvents};
 use crate::sim::SimClock;
@@ -42,6 +42,7 @@ pub fn assign(units: &[Recipient], target: [f32; 3], facing: f32, soldiers: &mut
                 }
                 s.goal.0 = Some(place(anchor, facing, s.slot.right, s.slot.forward));
                 s.goal_facing.0 = Some(facing);
+                *s.stance = Stance::Standing;
                 *s.activity = Activity::Moving;
                 s.fire.target = None;
             }
@@ -72,6 +73,44 @@ pub fn assign_perimeter(
         if let Ok(mut s) = soldiers.get_mut(*m) {
             s.goal.0 = Some(place(centre, yaw, 0.0, radius));
             s.goal_facing.0 = Some(yaw);
+            *s.stance = Stance::Standing;
+            *s.activity = Activity::Moving;
+            s.fire.target = None;
+        }
+    }
+}
+
+/// Spread the units' soldiers evenly along the line `from` → `to`, all facing
+/// `facing`; crouched behind cover if `crouch`.
+pub fn assign_line(
+    units: &[Recipient],
+    from: [f32; 3],
+    to: [f32; 3],
+    facing: f32,
+    crouch: bool,
+    soldiers: &mut AiSoldiers,
+) {
+    let members: Vec<Entity> = units
+        .iter()
+        .flat_map(|u| u.members.iter().copied())
+        .filter(|m| soldiers.get(*m).is_ok_and(|s| *s.life != LifeState::Dead))
+        .collect();
+    let n = members.len().max(1) as f32;
+    for (i, m) in members.iter().enumerate() {
+        let t = (i as f32 + 0.5) / n;
+        let at = [
+            from[0] + (to[0] - from[0]) * t,
+            from[1] + (to[1] - from[1]) * t,
+            from[2] + (to[2] - from[2]) * t,
+        ];
+        if let Ok(mut s) = soldiers.get_mut(*m) {
+            s.goal.0 = Some(at);
+            s.goal_facing.0 = Some(facing);
+            *s.stance = if crouch {
+                Stance::Crouching
+            } else {
+                Stance::Standing
+            };
             *s.activity = Activity::Moving;
             s.fire.target = None;
         }

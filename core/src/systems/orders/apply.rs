@@ -80,6 +80,12 @@ pub fn apply_orders(
             } => {
                 move_to::assign_perimeter(&recipients, centre, radius, start, sweep, &mut soldiers)
             }
+            Order::Line {
+                from,
+                to,
+                facing,
+                crouch,
+            } => move_to::assign_line(&recipients, from, to, facing, crouch, &mut soldiers),
             Order::FireAt { target } => {
                 fire_at::assign(&recipients, target, &mut rng, &mut soldiers, &weapons)
             }

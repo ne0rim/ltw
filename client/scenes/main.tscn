@@ -6,7 +6,8 @@
 [ext_resource type="PackedScene" path="res://scenes/ui/hud.tscn" id="4_hud"]
 [ext_resource type="Script" uid="uid://jkekbtlu1yix" path="res://scripts/platoon_view.gd" id="5_platoon"]
 [ext_resource type="Script" uid="uid://d18rcc0cqd6eo" path="res://scripts/command_input.gd" id="6_command"]
-[ext_resource type="PackedScene" path="res://scenes/props/ammo_box.tscn" id="7_ammo"]
+[ext_resource type="Script" uid="uid://dcwdcb1vtn8k" path="res://scripts/map_objects.gd" id="8_objects"]
+[ext_resource type="Script" path="res://scripts/grass_field.gd" id="9_grass"]
 
 [sub_resource type="ProceduralSkyMaterial" id="Sky_mat"]
 sky_top_color = Color(0.45, 0.45, 0.45, 1)
@@ -43,15 +44,18 @@ directional_shadow_max_distance = 250.0
 
 [node name="Terrain" type="Node3D" parent="." unique_id=2102137708]
 script = ExtResource("2_terrain")
-size_m = 1024.0
 
 [node name="Player" parent="." unique_id=1749561026 instance=ExtResource("3_player")]
 
-[node name="AmmoBox" parent="." unique_id=541945542 node_paths=PackedStringArray("sim", "player", "terrain") instance=ExtResource("7_ammo")]
-transform = Transform3D(0.866025, 0, 0.5, 0, 1, 0, -0.5, 0, 0.866025, 4, 0, 165)
+[node name="Grass" type="Node3D" parent="." node_paths=PackedStringArray("terrain", "focus")]
+script = ExtResource("9_grass")
+terrain = NodePath("../Terrain")
+focus = NodePath("../Player")
+
+[node name="MapObjects" type="Node3D" parent="." unique_id=1240601547 node_paths=PackedStringArray("sim", "player")]
+script = ExtResource("8_objects")
 sim = NodePath("../SimBridge")
 player = NodePath("../Player")
-terrain = NodePath("../Terrain")
 
 [node name="Platoon" type="Node3D" parent="." unique_id=1647293171 node_paths=PackedStringArray("commander")]
 script = ExtResource("5_platoon")

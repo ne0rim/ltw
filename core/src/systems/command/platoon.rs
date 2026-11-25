@@ -29,13 +29,14 @@ use std::f32::consts::TAU;
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::query::{QueryData, With};
-use bevy_ecs::system::{Commands, Query, ResMut};
+use bevy_ecs::system::{Commands, Query, Res, ResMut};
 
 use crate::components::{
     Controller, Members, Plan, PlanPhase, Playbook, Soldier, Task, TaskKind, TaskStage, Transform,
     Unit, UnitKind,
 };
 use crate::events::{SimEvent, SimEvents};
+use crate::map::{ActiveMap, MapDef, MapObject, ObjectKind};
 use crate::rng::SimRng;
 
 use super::geometry::{centre, direction, distance, facing, offset};
@@ -59,6 +60,7 @@ pub fn command_platoons(
     mut events: ResMut<SimEvents>,
     mut units: Query<CommandUnit>,
     soldiers: Query<&Transform, With<Soldier>>,
+    map: Option<Res<ActiveMap>>,
 ) {
     let by_id: HashMap<u32, Entity> = units.iter().map(|u| (u.unit.id, u.entity)).collect();
     let mut platoons: Vec<(u32, Entity)> = units
@@ -107,6 +109,7 @@ pub fn command_platoons(
         }
         let ctx = Ctx {
             subs: &subs,
+            map: map.as_deref().map(|m| &m.0),
             here: here.unwrap_or(kind.point()),
             pos_of: &pos_of,
             stage_of: &stage_of,
@@ -163,6 +166,8 @@ pub fn command_platoons(
 /// What a commander knows while deciding.
 struct Ctx<'a> {
     subs: &'a SubUnits,
+    /// The map (barricades and other objects, found through its index).
+    map: Option<&'a MapDef>,
     /// Centre of the whole unit now.
     here: [f32; 3],
     pos_of: &'a dyn Fn(u32) -> Option<[f32; 3]>,
@@ -251,6 +256,18 @@ fn make_plan(kind: TaskKind, ctx: &Ctx, rng: &mut SimRng) -> (Plan, Vec<(u32, Ta
         }
         TaskKind::Defend { position, facing } => {
             let front = forward(facing);
+            // Barricades here facing the threat: man them.
+            if let Some(tasks) = prepared_positions(position, facing, ctx) {
+                return (
+                    Plan::new(
+                        Playbook::PreparedDefence,
+                        PlanPhase::Consolidate,
+                        subs.hq,
+                        front,
+                    ),
+                    tasks,
+                );
+            }
             let playbook = pick(
                 rng,
                 &[(Playbook::Defend, 2), (Playbook::AllRoundDefence, 1)],
@@ -295,7 +312,10 @@ fn make_plan(kind: TaskKind, ctx: &Ctx, rng: &mut SimRng) -> (Plan, Vec<(u32, Ta
             }
             (plan, tasks)
         }
-        TaskKind::MoveTo { .. } | TaskKind::SupportByFire { .. } | TaskKind::Perimeter { .. } => {
+        TaskKind::MoveTo { .. }
+        | TaskKind::SupportByFire { .. }
+        | TaskKind::Perimeter { .. }
+        | TaskKind::Occupy { .. } => {
             let tasks = subs.all().map(|id| (id, kind)).collect();
             (
                 Plan::new(
@@ -500,7 +520,14 @@ fn advance(kind: TaskKind, mut plan: Plan, ctx: &Ctx) -> (Plan, Step) {
             }
         }
         // Defences and harbours: report when everyone is in place.
-        (Playbook::Defend | Playbook::AllRoundDefence | Playbook::Harbour, _, _) => {
+        (
+            Playbook::Defend
+            | Playbook::AllRoundDefence
+            | Playbook::PreparedDefence
+            | Playbook::Harbour,
+            _,
+            _,
+        ) => {
             step.holding = ctx.all_in_position(&subs.all_ids());
         }
         _ => {}
@@ -509,6 +536,74 @@ fn advance(kind: TaskKind, mut plan: Plan, ctx: &Ctx) -> (Plan, Step) {
 }
 
 // ---------------------------------------------------------------- building blocks
+
+/// Prepared defence: if there is a barricade for every section near
+/// `position`, facing within `PREPARED_FACING_DEG` of `facing`, each section
+/// mans one, crouched just behind it. Sections take barricades in left-to-right
+/// order so nobody crosses. The HQ waits behind. None if there aren't enough.
+fn prepared_positions(position: [f32; 3], facing: f32, ctx: &Ctx) -> Option<Vec<(u32, TaskKind)>> {
+    let subs = ctx.subs;
+    let n = subs.sections.len();
+    if n == 0 {
+        return None;
+    }
+    let max_turn = tuning::PREPARED_FACING_DEG.to_radians();
+    let map = ctx.map?;
+    let mut walls: Vec<&MapObject> = map
+        .objects_within(position, tuning::PREPARED_RADIUS)
+        .into_iter()
+        .map(|(_, o)| o)
+        .filter(|o| o.kind == ObjectKind::Barricade)
+        .filter(|o| angle_between(o.defender_yaw(), facing) <= max_turn)
+        .collect();
+    if walls.len() < n {
+        return None;
+    }
+    // The n nearest the position, then left to right across the front.
+    walls.sort_by(|a, b| distance(a.position, position).total_cmp(&distance(b.position, position)));
+    walls.truncate(n);
+    let front = forward(facing);
+    let right = [-front[1], front[0]];
+    let across = |p: [f32; 3]| (p[0] - position[0]) * right[0] + (p[2] - position[2]) * right[1];
+    walls.sort_by(|a, b| across(a.position).total_cmp(&across(b.position)));
+    let mut sections = subs.sections.clone();
+    sections.sort_by(|a, b| {
+        let x = |id: &u32| (ctx.pos_of)(*id).map_or(0.0, across);
+        x(a).total_cmp(&x(b))
+    });
+
+    let mut tasks: Vec<(u32, TaskKind)> = sections
+        .iter()
+        .zip(&walls)
+        .map(|(id, wall)| {
+            let (from, to) = wall.firing_line(tuning::BEHIND_BARRICADE);
+            (
+                *id,
+                TaskKind::Occupy {
+                    from,
+                    to,
+                    facing: wall.defender_yaw(),
+                },
+            )
+        })
+        .collect();
+    if let Some(hq) = subs.hq {
+        tasks.push((
+            hq,
+            TaskKind::Defend {
+                position: offset(position, front, 25.0, 0.0),
+                facing,
+            },
+        ));
+    }
+    Some(tasks)
+}
+
+/// Smallest angle between two yaws (radians, 0..PI).
+fn angle_between(a: f32, b: f32) -> f32 {
+    let d = (a - b).rem_euclid(TAU);
+    d.min(TAU - d)
+}
 
 /// The next bound of a leapfrog toward `target`. The lead sections take turns
 /// (in `plan.assault` order); each bound puts the mover `tuning::BOUND` metres

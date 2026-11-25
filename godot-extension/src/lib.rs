@@ -2,7 +2,10 @@
 
 use godot::init::{ExtensionLibrary, gdextension};
 
+mod map_dicts;
+mod map_file;
 mod sim_bridge;
+mod terrain_mesh;
 
 struct LtwExtension;
 

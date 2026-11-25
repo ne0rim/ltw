@@ -58,6 +58,12 @@ pub mod tuning {
     pub const HQ_HOLD_RADIUS: f32 = 6.0;
     /// Radius a lone section holds all-round in (m).
     pub const SECTION_HOLD_RADIUS: f32 = 8.0;
+    /// A defending platoon mans barricades this close to its position (m)...
+    pub const PREPARED_RADIUS: f32 = 90.0;
+    /// ...that face within this many degrees of the threat.
+    pub const PREPARED_FACING_DEG: f32 = 60.0;
+    /// How far behind a barricade's rear face its defenders kneel (m).
+    pub const BEHIND_BARRICADE: f32 = 0.5;
     /// Distance between sections in a patrol wedge (m).
     pub const PATROL_SPACING: f32 = 30.0;
 }

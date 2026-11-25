@@ -1,9 +1,8 @@
 class_name PlatoonView
 extends Node3D
 ## Shows the soldiers the Rust sim knows about. Spawning, organisation, orders
-## and all soldier data live in Rust; this node draws them, plays their shots,
-## and keeps the sim told about ground heights (the sim doesn't have the
-## terrain yet).
+## and all soldier data live in Rust (including their height on the map's
+## ground); this node draws them and plays their shots.
 ## The node itself lives in main.tscn; its Soldier_N children are created at
 ## runtime from the sim's roster (however many soldiers it has).
 
@@ -41,24 +40,19 @@ func attach(sim: SimBridge, terrain: Terrain) -> void:
 	_sim.sim_event.connect(_on_sim_event)
 
 
-## Pull a fresh snapshot from the sim, update visuals, and report ground heights.
+## Pull a fresh snapshot from the sim and update the visuals.
 func refresh() -> void:
 	soldiers = _sim.get_soldiers()
 	units = _sim.get_units()
-	var ids := PackedInt32Array()
-	var heights := PackedFloat32Array()
 	for info in soldiers:
 		if info.is_player:
 			player_info = info
 			continue
-		var p: Vector3 = info.position
-		var y := ground_height(p.x, p.z)
-		ids.append(info.id)
-		heights.append(y)
+		# The core keeps soldiers on the map's ground; use its height.
+		var y: float = (info.position as Vector3).y
 		if not _visuals.has(info.id):
 			_add_visual(info, y)
 		_visuals[info.id].update_state(info, y)
-	_sim.set_soldier_heights(ids, heights)
 
 
 func _add_visual(info: Dictionary, ground_y: float) -> void:

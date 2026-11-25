@@ -1,3 +1,6 @@
 # Blender autosave backups
 *.blend1
 *.blend2
+
+# Generated map heights (large; rebuild with: cd core && cargo run --release --bin mapgen)
+core/data/maps/*/heights.bin

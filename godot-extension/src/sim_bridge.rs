@@ -14,6 +14,7 @@ use godot::meta::ToGodot;
 use godot::obj::{Base, WithUserSignals};
 use godot::register::{GodotClass, godot_api};
 
+use crate::map_dicts;
 use ltw_core::sim::{Sim, SimConfig, defaults};
 use ltw_core::{Gait, PlayerReport, SimEvent, Stance, Transform, Velocity};
 
@@ -156,6 +157,13 @@ impl SimBridge {
         }
     }
 
+    /// Throw the current sim away and start an empty one (no map yet).
+    #[func]
+    fn reset(&mut self) {
+        self.sync_config();
+        self.sim = Sim::new(self.sim.config);
+    }
+
     /// Write the sim to `path` (an absolute OS path). Returns true on success.
     #[func]
     fn save_game(&mut self, path: GString) -> bool {
@@ -174,7 +182,7 @@ impl SimBridge {
 
     // ------------------------------------------------------------ platoon
 
-    /// Start a map from the core's map files (e.g. "test_area"): spawns every
+    /// Start a map from the core's map files (e.g. "hill"): spawns every
     /// force on it, both sides. Returns false for an unknown map.
     #[func]
     fn start_map(&mut self, id: GString) -> bool {
@@ -191,18 +199,64 @@ impl SimBridge {
     /// starts (player_start, player_yaw). Empty if no map is active.
     #[func]
     fn get_map(&self) -> VarDictionary {
-        let Some(map) = self.sim.map() else {
-            return VarDictionary::new();
-        };
-        let start = map.forces.iter().find(|f| f.led_by_player);
-        vdict! {
-            "id" => &map.id.to_variant(),
-            "name" => &map.name.to_variant(),
-            "size_m" => &map.size_m.to_variant(),
-            "has_player_start" => &start.is_some().to_variant(),
-            "player_start" => &v3(start.map_or([0.0; 3], |f| f.position)).to_variant(),
-            "player_yaw" => &start.map_or(0.0, |f| f.yaw()).to_variant(),
-        }
+        self.sim.map().map(map_dicts::info).unwrap_or_default()
+    }
+
+    /// The map's elevation grid (see `map_dicts::terrain`). Empty if the map
+    /// has no terrain.
+    #[func]
+    fn get_terrain(&self) -> VarDictionary {
+        self.sim
+            .map()
+            .and_then(|m| m.heights.as_deref())
+            .map(map_dicts::terrain)
+            .unwrap_or_default()
+    }
+
+    /// The terrain mesh for one square chunk: `cells` × `cells` height cells
+    /// starting at sample (`ix0`, `iz0`), using every `step`-th sample (1 =
+    /// full detail). `lo`/`hi` are the map's height range (for shading, from
+    /// `get_terrain`). Returns vertices, normals, colors and indices, with a
+    /// skirt `skirt_m` deep round the edges to hide seams between chunks drawn
+    /// at different detail.
+    #[func]
+    #[allow(clippy::too_many_arguments)]
+    fn get_terrain_chunk(
+        &self,
+        ix0: i64,
+        iz0: i64,
+        cells: i64,
+        step: i64,
+        lo: f32,
+        hi: f32,
+        skirt_m: f32,
+    ) -> VarDictionary {
+        let spec = map_dicts::chunk_spec(ix0, iz0, cells, step, skirt_m);
+        self.sim
+            .map()
+            .and_then(|m| m.heights.as_deref())
+            .map(|h| map_dicts::terrain_chunk(h, spec, (lo, hi)))
+            .unwrap_or_default()
+    }
+
+    /// Everything placed on the map (barricades, ammo boxes), as Dictionaries:
+    /// id, kind, position (centre of its base), yaw, and size (length across
+    /// its front, height, thickness front to back). For overviews such as the
+    /// tactical map; to show objects in the world use `get_map_objects_near`.
+    #[func]
+    fn get_map_objects(&self) -> VarArray {
+        self.sim.map().map(map_dicts::objects).unwrap_or_default()
+    }
+
+    /// The objects within `radius` metres of `centre` (found through the
+    /// core's spatial index, so the cost depends on what's nearby, not on the
+    /// size of the map). Same fields as `get_map_objects`, in id order.
+    #[func]
+    fn get_map_objects_near(&self, centre: Vector3, radius: f32) -> VarArray {
+        self.sim
+            .map()
+            .map(|m| map_dicts::objects_near(m, centre, radius))
+            .unwrap_or_default()
     }
 
     /// "blue" or "red": the side the player fights for.

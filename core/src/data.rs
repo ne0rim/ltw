@@ -5,17 +5,30 @@
 //! first time they are used. Edit the JSON and rebuild to change them.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::LazyLock;
 
 use crate::components::{Veterancy, WeaponSpec, WeaponStats};
-use crate::map::MapDef;
+use crate::map::{Heightfield, MapDef};
 
 const SURNAMES_JSON: &str = include_str!("../data/surnames.json");
 const WEAPONS_JSON: &str = include_str!("../data/weapons.json");
 const VETERANCY_JSON: &str = include_str!("../data/veterancy.json");
 
-/// Every map file, by id. Add a new map by adding its file here.
-const MAP_FILES: &[(&str, &str)] = &[("test_area", include_str!("../data/maps/test_area.json"))];
+/// One map's files (a folder in `core/data/maps/`).
+struct MapFiles {
+    id: &'static str,
+    json: &'static str,
+    /// `heights.bin`, if the map has terrain.
+    heights: Option<&'static [u8]>,
+}
+
+/// Every map, by id. Add a new map by adding its folder here.
+const MAP_FILES: &[MapFiles] = &[MapFiles {
+    id: "hill",
+    json: include_str!("../data/maps/hill/map.json"),
+    heights: Some(include_bytes!("../data/maps/hill/heights.bin")),
+}];
 
 /// English and French Canadian surnames, handed out to soldiers at spawn.
 pub static SURNAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
@@ -45,11 +58,34 @@ pub static WEAPONS: LazyLock<HashMap<&'static str, WeaponSpec>> = LazyLock::new(
 pub static MAPS: LazyLock<HashMap<&'static str, MapDef>> = LazyLock::new(|| {
     MAP_FILES
         .iter()
-        .map(|(id, json)| {
-            let def: MapDef = serde_json::from_str(json)
-                .unwrap_or_else(|e| panic!("core/data/maps/{id}.json is invalid: {e}"));
-            assert_eq!(def.id, *id, "map file {id}.json has id {}", def.id);
-            (*id, def)
+        .map(|f| {
+            let id = f.id;
+            let mut def: MapDef = serde_json::from_str(f.json)
+                .unwrap_or_else(|e| panic!("core/data/maps/{id}/map.json is invalid: {e}"));
+            assert_eq!(def.id, id, "map folder {id} has id {}", def.id);
+            if let Some(t) = &def.terrain {
+                let bytes = f
+                    .heights
+                    .unwrap_or_else(|| panic!("map {id} has terrain but no heights file"));
+                // An empty file is the build script's placeholder (fresh clone).
+                assert!(
+                    !bytes.is_empty(),
+                    "map {id}: core/data/maps/{id}/{} hasn't been generated yet. Run \
+                     `cargo run --release --bin mapgen` in core/, then rebuild.",
+                    t.heights_file
+                );
+                let field = Heightfield::from_bytes(t.samples, t.cell_m, bytes)
+                    .unwrap_or_else(|e| panic!("core/data/maps/{id}/{}: {e}", t.heights_file));
+                assert!(
+                    (field.size_m() - def.size_m).abs() < 0.01,
+                    "map {id}: terrain covers {} m but size_m is {}",
+                    field.size_m(),
+                    def.size_m
+                );
+                def.heights = Some(Arc::new(field));
+            }
+            def.prepare();
+            (id, def)
         })
         .collect()
 });
@@ -88,7 +124,9 @@ pub static VETERANCY: LazyLock<HashMap<Veterancy, VeterancyStats>> = LazyLock::n
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::components::Veterancy;
+
+    use super::{MAPS, SURNAMES, VETERANCY, WEAPONS};
 
     #[test]
     fn data_files_parse() {

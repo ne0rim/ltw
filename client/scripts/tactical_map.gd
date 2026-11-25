@@ -34,6 +34,17 @@ const DEAD_COLOR := Color(0.45, 0.45, 0.45)
 @onready var _markers: Control = $Markers
 @onready var _panel: HudPanel = $SquadPanel
 
+## Map objects (from `MapObjects.objects`): trees, boulders and barricades
+## are drawn on the map.
+var objects: Array = []:
+	set(v):
+		objects = v
+		if _static:
+			_static.queue_redraw()
+
+var _static: Control
+var _static_rect := Rect2()  # map rect the still layer was drawn for
+
 var _terrain: Terrain
 var _platoon: PlatoonView
 var _player: Player
@@ -52,6 +63,13 @@ func setup(terrain: Terrain, platoon: PlatoonView, player: Player, command: Comm
 
 func _ready() -> void:
 	visible = false
+	# The still layer sits between the height map and the moving markers.
+	_static = Control.new()
+	_static.name = "StaticLayer"
+	_static.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_static)
+	move_child(_static, _markers.get_index())
+	_static.draw.connect(_draw_static)
 	_markers.draw.connect(_draw_markers)
 	resized.connect(_layout)
 
@@ -160,6 +178,7 @@ func _build_height_texture() -> void:
 	_image.texture = ImageTexture.create_from_image(img)
 	_bounds = _terrain.get_bounds()
 	_built = true
+	_static.queue_redraw()
 
 
 func _layout() -> void:
@@ -171,6 +190,12 @@ func _layout() -> void:
 	_image.size = _map_rect.size
 	_markers.position = Vector2.ZERO
 	_markers.size = size
+	var moved := _static.size != size or _static_rect != _map_rect
+	_static.position = Vector2.ZERO
+	_static.size = size
+	if moved:
+		_static_rect = _map_rect
+		_static.queue_redraw()
 
 
 ## Screen to world, on the ground.
@@ -188,11 +213,14 @@ func _to_map(world: Vector3) -> Vector2:
 
 # ------------------------------------------------------------------ markers
 
-func _draw_markers() -> void:
+## The parts of the map that don't move (grid, trees, boulders, barricades),
+## drawn once into their own layer and redrawn only when the map is opened,
+## resized or its objects change. Drawing thousands of trees every frame
+## would make the map crawl.
+func _draw_static() -> void:
 	if not _built:
 		return
-	var font := get_theme_default_font()
-	var m := _markers
+	var m := _static
 	var px_per_m := _map_rect.size.x / _bounds.size.x
 
 	# Grid.
@@ -207,6 +235,35 @@ func _draw_markers() -> void:
 		m.draw_line(Vector2(_map_rect.position.x, sy), Vector2(_map_rect.end.x, sy), Color(1, 1, 1, 0.08))
 		z += grid_m
 	m.draw_rect(_map_rect, Color(0, 0, 0, 0.9), false, 2.0)
+
+	# Trees (dark green, sized by canopy) and boulders (grey), under everything.
+	for o in objects:
+		if o.kind == "tree":
+			var r := maxf(1.2, float(o.canopy) * px_per_m)
+			m.draw_circle(_to_map(o.position), r, Color(0.12, 0.25, 0.12, 0.85))
+		elif o.kind == "boulder":
+			m.draw_circle(_to_map(o.position), maxf(1.0, float(o.length) * 0.5 * px_per_m), Color(0.6, 0.6, 0.58))
+
+	# Barricades: a thick line along their front.
+	for o in objects:
+		if o.kind != "barricade":
+			continue
+		var yaw: float = o.yaw
+		var half: float = o.length * 0.5
+		var centre: Vector3 = o.position
+		var right := Vector3(cos(yaw), 0.0, -sin(yaw)) * half
+		var a := _to_map(centre - right)
+		var b := _to_map(centre + right)
+		m.draw_line(a, b, Color.BLACK, 5.0)
+		m.draw_line(a, b, Color("c9b27c"), 3.0)
+
+
+func _draw_markers() -> void:
+	if not _built:
+		return
+	var font := get_theme_default_font()
+	var m := _markers
+	var px_per_m := _map_rect.size.x / _bounds.size.x
 
 	var colors := _unit_colors()
 	var by_id := {}

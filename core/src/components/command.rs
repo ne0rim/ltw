@@ -101,6 +101,13 @@ pub enum TaskKind {
     /// Fall back to `position`, then defend it facing `facing` (toward the
     /// threat).
     Withdraw { position: [f32; 3], facing: f32 },
+    /// Man a firing line (behind a barricade): spread along `from` → `to`,
+    /// crouched, facing `facing`.
+    Occupy {
+        from: [f32; 3],
+        to: [f32; 3],
+        facing: f32,
+    },
 }
 
 /// Most waypoints a route can have.
@@ -169,6 +176,7 @@ impl TaskKind {
             Self::Perimeter { .. } => "perimeter",
             Self::Patrol { .. } => "patrol",
             Self::Withdraw { .. } => "withdraw",
+            Self::Occupy { .. } => "occupy",
         }
     }
     /// The point the task is about (for maps and UI).
@@ -182,6 +190,7 @@ impl TaskKind {
             | Self::Withdraw { position, .. } => position,
             Self::Perimeter { centre, .. } => centre,
             Self::Patrol { route, leg } => route.get(leg as usize),
+            Self::Occupy { from, to, .. } => super::orders::midpoint(from, to),
         }
     }
 }
@@ -272,6 +281,9 @@ pub enum Playbook {
     Defend,
     /// Sections share a perimeter round the position, facing every way.
     AllRoundDefence,
+    /// Each section mans a barricade near the position (the map's prepared
+    /// positions), crouched behind it.
+    PreparedDefence,
     // Other tasks
     /// Idle: all-round security where the unit stands.
     Harbour,
@@ -291,6 +303,7 @@ impl Playbook {
             Self::BoundingAdvance => "bounding advance",
             Self::Defend => "linear defence",
             Self::AllRoundDefence => "all-round defence",
+            Self::PreparedDefence => "prepared defence",
             Self::Harbour => "harbour",
             Self::Patrol => "patrol",
             Self::Withdraw => "withdraw",

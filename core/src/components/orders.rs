@@ -17,6 +17,14 @@ pub enum Order {
         start: f32,
         sweep: f32,
     },
+    /// Spread evenly along the line from `from` to `to`, all facing `facing`
+    /// (yaw); crouched if `crouch` (behind a barricade).
+    Line {
+        from: [f32; 3],
+        to: [f32; 3],
+        facing: f32,
+        crouch: bool,
+    },
 }
 
 impl Order {
@@ -25,18 +33,32 @@ impl Order {
             Self::MoveTo { .. } => "move",
             Self::FireAt { .. } => "fire",
             Self::Perimeter { .. } => "perimeter",
+            Self::Line { .. } => "line",
         }
     }
     pub fn target(&self) -> [f32; 3] {
         match *self {
             Self::MoveTo { target, .. } | Self::FireAt { target } => target,
             Self::Perimeter { centre, .. } => centre,
+            Self::Line { from, to, .. } => midpoint(from, to),
         }
     }
     /// Orders that walk soldiers somewhere and end when they have all arrived.
     pub fn is_move(&self) -> bool {
-        matches!(self, Self::MoveTo { .. } | Self::Perimeter { .. })
+        matches!(
+            self,
+            Self::MoveTo { .. } | Self::Perimeter { .. } | Self::Line { .. }
+        )
     }
+}
+
+/// Halfway between two points.
+pub fn midpoint(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        (a[0] + b[0]) * 0.5,
+        (a[1] + b[1]) * 0.5,
+        (a[2] + b[2]) * 0.5,
+    ]
 }
 
 /// The order a unit is carrying out (on platoon/section entities).

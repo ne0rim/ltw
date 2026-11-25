@@ -257,7 +257,13 @@ pub fn normalize(a: [f32; 3]) -> [f32; 3] {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::components::{Stance, Veterancy};
+    use crate::rng::SimRng;
+
+    use super::{
+        Body, deviate, drop_at, erf, hit_probability, normalize, shooter_error_mrad, spread_mrad,
+        sub, trace,
+    };
 
     const TRAINED_STANDING: f32 = 4.0;
     const M16: f32 = 1.0;

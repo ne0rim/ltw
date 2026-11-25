@@ -505,10 +505,12 @@ pub fn restore(world: &mut World, player: Entity, save: &SaveGame) {
 mod tests {
     use std::f32::consts::PI;
 
-    use crate::components::TaskKind;
+    use std::fs;
+
+    use crate::components::{Side, TaskKind};
     use crate::sim::{Sim, SimConfig};
 
-    use super::*;
+    use super::{SAVE_VERSION, SaveError, read_file, write_file};
 
     /// A sim with a platoon in the middle of a fire mission and a move.
     fn busy_sim() -> Sim {

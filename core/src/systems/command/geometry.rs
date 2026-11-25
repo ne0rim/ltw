@@ -50,7 +50,7 @@ pub fn centre(points: impl Iterator<Item = [f32; 3]>) -> Option<[f32; 3]> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{facing, offset};
 
     #[test]
     fn offset_back_and_right_of_north() {
