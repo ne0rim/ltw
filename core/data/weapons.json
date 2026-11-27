@@ -1,12 +1,3 @@
-{
-  "m16a2": {
-    "name": "M16A2",
-    "caliber": "5.56x45mm",
-    "stats": {
-      "magazine_capacity": 30,
-      "dispersion_mrad": 1.0,
-      "muzzle_velocity_mps": 948.0,
-      "max_range_m": 800.0
-    }
-  }
-}
+version https://git-lfs.github.com/spec/v1
+oid sha256:dba02b19f89ad5a81bdc22eace269946950b2860dffdf79baaffc988b1059373
+size 215

@@ -1,6 +1,3 @@
-{
-  "Green":   { "aim_error_mrad": 6.0 },
-  "Trained": { "aim_error_mrad": 4.0 },
-  "Veteran": { "aim_error_mrad": 3.0 },
-  "Elite":   { "aim_error_mrad": 2.0 }
-}
+version https://git-lfs.github.com/spec/v1
+oid sha256:792dff1c5239d69c39a232d6f3249b1df77374b670707d1cb447e8a182af98fd
+size 163

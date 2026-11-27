@@ -2,5 +2,9 @@
 *.blend1
 *.blend2
 
-# Generated map heights (large; rebuild with: cd core && cargo run --release --bin mapgen)
-core/data/maps/*/heights.bin
+# Map heights (core/data/maps/*/heights.bin) are tracked through Git LFS
+# (see .gitattributes), so a fresh clone can run without rebuilding them.
+
+# Python bytecode caches (from the Blender build scripts)
+__pycache__/
+*.pyc
