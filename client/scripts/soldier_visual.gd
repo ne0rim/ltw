@@ -1,8 +1,9 @@
 class_name SoldierVisual
 extends StaticBody3D
-## Placeholder look for an AI soldier: a capsule carrying their weapon, with a
-## name tag, a side ring (blue/red, notch = facing) and a selection ring. It
-## only shows what the Rust sim says; it never decides anything itself.
+## How an AI soldier looks: a dressed, animated soldier (SoldierBody) holding
+## their weapon, with a name tag, a side ring (blue/red, notch = facing) and a
+## selection ring. It only shows what the Rust sim says; it never decides
+## anything itself.
 
 const WEAPON_SCENES := {
 	"m16a2": preload("res://assets/models/weapons/m16a2.glb"),
@@ -10,13 +11,6 @@ const WEAPON_SCENES := {
 ## Physics layer for soldiers (so order raycasts can ignore them).
 const SOLDIER_LAYER := 2
 
-## Weapon at low ready (idle, moving): position and rotation in degrees.
-@export var weapon_position := Vector3(0.14, 1.22, -0.46)
-@export var weapon_rotation_deg := Vector3(-30.0, 18.0, 0.0)
-## Weapon shouldered (firing, reloading).
-@export var aim_position := Vector3(0.12, 1.45, -0.34)
-@export var aim_rotation_deg := Vector3(0.0, 0.0, 0.0)
-@export var pose_speed := 8.0
 ## Name tags fade out beyond this distance (metres).
 @export var label_range := 35.0
 ## How quickly the capsule glides to the sim's position (higher = snappier).
@@ -25,7 +19,7 @@ const SOLDIER_LAYER := 2
 var soldier_id := -1
 var activity := "idle"
 
-var _body: MeshInstance3D
+var _body: SoldierBody
 var _label: Label3D
 var _ring: MeshInstance3D
 var _side_ring: SideRing
@@ -35,10 +29,10 @@ var _muzzle: Node3D
 var _weapon_id := ""
 var _target_pos := Vector3.ZERO
 var _target_yaw := 0.0
-var _aim_t := 0.0
 var _placed := false
 var _dead := false
-var _visor: MeshInstance3D
+var _speed := 0.0
+var _last_pos := Vector3.ZERO
 
 
 func _init() -> void:
@@ -52,24 +46,10 @@ func _init() -> void:
 	col.position.y = 0.9
 	add_child(col)
 
-	var mesh := CapsuleMesh.new()
-	mesh.radius = 0.35
-	mesh.height = 1.8
-	_body = MeshInstance3D.new()
-	_body.mesh = mesh
-	_body.position.y = 0.9
+	_body = SoldierBody.new()
+	# The model faces +Z (glTF); a soldier's facing is -Z.
+	_body.rotation.y = PI
 	add_child(_body)
-
-	var visor := MeshInstance3D.new()
-	_visor = visor
-	var vbox := BoxMesh.new()
-	vbox.size = Vector3(0.4, 0.12, 0.2)
-	var vmat := StandardMaterial3D.new()
-	vmat.albedo_color = Color(0.1, 0.1, 0.1)
-	vbox.material = vmat
-	visor.mesh = vbox
-	visor.position = Vector3(0.0, 1.5, -0.3)
-	add_child(visor)
 
 	_ring = MeshInstance3D.new()
 	var torus := TorusMesh.new()
@@ -103,13 +83,10 @@ func _ready() -> void:
 
 
 ## Set everything that doesn't change often (called once).
-func setup(info: Dictionary, shade: float, ground_y: float) -> void:
+## `_shade` was the capsule's unit tint; the uniform is the same for everyone now.
+func setup(info: Dictionary, _shade: float, ground_y: float) -> void:
 	soldier_id = info.id
 	name = "Soldier_%d" % soldier_id
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(shade, shade, shade)
-	mat.roughness = 0.8
-	_body.material_override = mat
 	_set_weapon(info.weapon_id)
 	_side_ring.set_side(info.side)
 	update_state(info, ground_y)
@@ -123,6 +100,7 @@ func update_state(info: Dictionary, ground_y: float) -> void:
 	if not _placed:
 		position = _target_pos
 		rotation.y = _target_yaw
+		_last_pos = position
 		_placed = true
 	activity = info.activity
 	var team: String = info.fire_team
@@ -140,19 +118,25 @@ func set_selected(on: bool) -> void:
 	_ring.visible = on and not _dead
 
 
-## Killed: the capsule falls forward and lies on the ground where they stood.
-## The rifle drops beside them. Nothing about them changes after this.
+## Killed: the body falls forward and lies face down where they stood. The
+## rifle drops beside them. Nothing about them changes after this.
+## (A placeholder until there's a proper death animation.)
 func _lie_down() -> void:
 	_dead = true
 	activity = "idle"
-	# The capsule's axis goes from upright to lying along their facing.
-	_body.rotation = Vector3(deg_to_rad(-90.0), 0.0, 0.0)
-	_body.position = Vector3(0.0, 0.35, -0.9)
-	_visor.visible = false
+	_body.freeze()
+	# Pivot about the feet: upright -> lying along their facing, chest down
+	# (the model faces +Z, so tip it +90 about X, then turn it to face -Z).
+	_body.rotation = Vector3(deg_to_rad(90.0), PI, 0.0)
+	_body.position = Vector3(0.0, 0.14, 0.0)
 	_ring.visible = false
 	_side_ring.visible = false
 	if _weapon:
-		_weapon.position = Vector3(0.55, 0.06, -0.6)
+		var t := _weapon.global_transform
+		_weapon.get_parent().remove_child(_weapon)
+		add_child(_weapon)
+		_weapon.global_transform = t
+		_weapon.position = Vector3(0.55, 0.04, -0.6)
 		_weapon.rotation_degrees = Vector3(0.0, 80.0, 90.0)
 	_label.text = _label.text.get_slice("\n", 0) + "\nKIA"
 	# The body is no longer an obstacle or a target for order raycasts.
@@ -177,28 +161,26 @@ func _process(delta: float) -> void:
 	var k := 1.0 - exp(-follow_speed * delta)
 	position = position.lerp(_target_pos, k)
 	rotation.y = lerp_angle(rotation.y, _target_yaw, k)
-	if _dead:
+	if _dead or delta <= 0.0:
 		return
+	# Ground speed as seen on screen, smoothed so the gait doesn't flicker.
+	var moved := position - _last_pos
+	_last_pos = position
+	var ground_speed := Vector2(moved.x, moved.z).length() / delta
+	_speed = lerpf(_speed, ground_speed, 1.0 - exp(-6.0 * delta))
 	var aiming := activity == "firing" or activity == "reloading"
-	_aim_t = move_toward(_aim_t, 1.0 if aiming else 0.0, delta * pose_speed * 0.5)
-	if _weapon:
-		var t := smoothstep(0.0, 1.0, _aim_t)
-		_weapon.position = weapon_position.lerp(aim_position, t)
-		_weapon.rotation_degrees = weapon_rotation_deg.lerp(aim_rotation_deg, t)
+	_body.animate(_speed, aiming, delta)
 
 
 func _set_weapon(weapon_id: String) -> void:
 	_weapon_id = weapon_id
 	if _weapon:
-		_weapon.queue_free()
+		_body.hold(null)
 		_weapon = null
 	_weapon_anim = null
 	_muzzle = null
 	if WEAPON_SCENES.has(weapon_id):
-		_weapon = WEAPON_SCENES[weapon_id].instantiate()
-		_weapon.position = weapon_position
-		_weapon.rotation_degrees = weapon_rotation_deg
-		add_child(_weapon)
+		_weapon = _body.hold(WEAPON_SCENES[weapon_id])
 		var anims := _weapon.find_children("*", "AnimationPlayer", true, false)
 		_weapon_anim = anims[0] if anims.size() > 0 else null
 		_muzzle = _weapon.find_child("socket_muzzle", true, false)

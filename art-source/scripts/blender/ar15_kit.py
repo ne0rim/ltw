@@ -741,16 +741,27 @@ def make_actions(arm, fps=30):
 # Output
 # --------------------------------------------------------------------------
 
+REFERENCE_COLLECTION = "reference (not exported)"
+
+
 def export_glb(path):
     """Export the open scene as a game-ready .glb.
     Modifiers you add by hand (bevels, subdivision...) are applied on export;
-    the Armature modifier is kept as skinning, so animations still work."""
+    the Armature modifier is kept as skinning, so animations still work.
+    Objects in the "reference (not exported)" collection (e.g. the body inside
+    a clothing file) are left out."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     kwargs = dict(
         filepath=path, export_format='GLB', export_yup=True, export_apply=True,
         export_animations=True, export_animation_mode='ACTIONS', export_extras=True,
         export_skins=True, export_materials='EXPORT',
     )
+    ref = bpy.data.collections.get(REFERENCE_COLLECTION)
+    if ref:
+        skip = set(ref.all_objects)
+        for obj in bpy.context.view_layer.objects:
+            obj.select_set(obj not in skip)
+        kwargs["use_selection"] = True
     try:
         bpy.ops.export_scene.gltf(**kwargs)
     except TypeError as e:

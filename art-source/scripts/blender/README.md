@@ -6,6 +6,39 @@ Weapons and the first-person arms are generated from code, then hand-edited in B
 |---|---|---|
 | `build_m16a2.py` | `m16a2` | weapons |
 | `build_fp_arms.py` | `fp_arms` | characters |
+| `build_base_body.py` | `base_body` | characters |
+| `build_trousers_woodland.py` | `trousers_woodland` | characters |
+| `build_boots_combat.py` | `boots_combat` | characters |
+| `build_shirt_woodland.py` | `shirt_woodland` | characters |
+| `build_soldier_rig.py` | `soldier_rig` | characters |
+
+## Rigged body and modular clothing
+
+`build_base_body.py` rigs the 1.8 m base human (from `base_soldier.blend`) with
+the armature `Rig`. Bone names follow Godot's `SkeletonProfileHumanoid`
+(`Hips`, `Spine`, `LeftUpperLeg`, ...); hands are a single bone for now.
+
+Each clothing/gear piece (`build_<piece>.py`, helpers in `character_kit.py`)
+is fitted to that body and copies its skin weights, so every piece shares the
+same skeleton. A piece's `.glb` holds its own copy of `Rig` plus its mesh. In
+Godot, point the piece's MeshInstance3D `skeleton` at the body's Skeleton3D.
+
+Inside a piece's `.blend`, the body sits in the `reference (not exported)`
+collection: it is there for fitting and checking, and is never exported.
+Build the body first, and rebuild pieces after changing the body's rig.
+Camouflage textures are generated into `art-source/textures/camo/`.
+
+`build_soldier_rig.py` makes the game's soldier: the body split into regions
+(`Body_Head`, `Body_Hands`, `Body_Torso`, `Body_Legs`, `Body_Feet`, so the
+game hides what clothing covers), `socket_rifle` on the right hand, and the
+in-place animations `idle`, `walk`, `run` (jog) and `aim`. Hands are put on
+the M16A2's grips with IK and feet follow stepping paths, then everything is
+baked to plain bone keys. In Godot, `SoldierBody` (client/scripts/soldier_body.gd)
+dresses it, puts the weapon in the hand and drives the animations. Build
+order: body, then clothing pieces, then the soldier rig.
+
+Add `-- --previews <folder>` to a character build to render check images
+(front, back, side, and a mid-stride pose).
 
 ## Files per model
 
